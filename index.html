@@ -1719,56 +1719,103 @@ async function loadCerts() {
   const el = $('ssl');
   el.innerHTML = '';
   el.appendChild(emptyEl('Loading…'));
-  // /etc/letsencrypt/live is typically 0700 root — list via sudo.
-  const r = await sudoSafe(`ls -1 ${shellQuote(LE_LIVE)} 2>/dev/null || true`);
+
+  // One sudo invocation enumerates every cert dir under LE_LIVE and
+  // emits openssl details, prefixed by a sentinel header line per
+  // cert. Without batching, sudo would reprompt for each cert because
+  // the host doesn't cache passwords. Client-side parsing splits on
+  // the sentinel.
+  const SEP = '<<APACHE2-MGR-CERT>>';
+  const script =
+    'for d in ' + shellQuote(LE_LIVE) + '/*/; do ' +
+    '  [ -d "$d" ] || continue; ' +
+    '  name=$(basename "$d"); ' +
+    '  case "$name" in README) continue;; esac; ' +
+    '  cert="$d/fullchain.pem"; ' +
+    '  [ -f "$cert" ] || cert="$d/cert.pem"; ' +
+    '  [ -f "$cert" ] || continue; ' +
+    '  echo "' + SEP + '|$name|$cert"; ' +
+    '  openssl x509 -in "$cert" -noout -subject -enddate -ext subjectAltName 2>&1 || true; ' +
+    'done';
+  const r = await sudoSafe('bash -c ' + shellQuote(script));
   if (r._cancelled) { showCertsIntro(); return; }
-  const dirs = (r.stdout || '').split('\n').map(s => s.trim()).filter(Boolean).filter(n => n !== 'README');
+
+  const certs = parseCerts(r.stdout || '', SEP);
   el.innerHTML = '';
   certsLoaded = true;
-  $('ssl-summary').textContent = `${dirs.length} certificate(s)`;
-  if (!dirs.length) {
+  $('ssl-summary').textContent = `${certs.length} certificate(s)`;
+  if (!certs.length) {
     el.appendChild(emptyEl('No certificates', `${LE_LIVE} is empty or absent. Click Issue cert to create one.`));
     return;
   }
-  for (const d of dirs) {
-    const certPath = `${LE_LIVE}/${d}/fullchain.pem`;
-    const info = await sudoSafe(`openssl x509 -in ${shellQuote(certPath)} -noout -subject -enddate -ext subjectAltName 2>/dev/null || true`);
-    const text = info.stdout || '';
-    const enddate = (text.match(/notAfter=(.*)/) || [])[1] || '';
-    const sans = ((text.match(/DNS:[^\n,]+/g) || []).map(s => s.replace('DNS:', '').trim()));
-    const expiryDate = enddate ? new Date(enddate) : null;
-    const days = expiryDate ? Math.floor((expiryDate.getTime() - Date.now()) / 86400000) : null;
+  for (const c of certs) el.appendChild(renderCertRow(c));
+}
 
-    const row = document.createElement('div');
-    row.className = 'row';
-    const name = document.createElement('div');
-    name.className = 'name';
-    const t = document.createElement('div');
-    t.className = 'ax-text';
-    t.textContent = d;
-    const sub = document.createElement('div');
-    sub.className = 'ax-text-muted';
-    sub.style.fontSize = '11px';
-    sub.textContent = sans.length ? ('SAN: ' + sans.join(', ')) : '';
-    name.append(t, sub);
+function parseCerts(raw, sep) {
+  if (!raw) return [];
+  const parts = raw.split(sep + '|').slice(1);
+  return parts.map(part => {
+    const lines = part.split('\n');
+    const head = (lines.shift() || '').split('|');
+    const name = head[0] || '';
+    const path = head[1] || '';
+    let enddate = '';
+    const sans = [];
+    let inSan = false;
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) { inSan = false; continue; }
+      if (/^notAfter\s*=/i.test(line)) {
+        enddate = line.replace(/^notAfter\s*=\s*/i, '').trim();
+        inSan = false;
+      } else if (/Subject Alternative Name/i.test(line)) {
+        inSan = true;
+      } else if (inSan) {
+        for (const tok of line.split(/[,\s]+/)) {
+          if (/^DNS:/i.test(tok)) sans.push(tok.replace(/^DNS:/i, ''));
+        }
+      }
+    }
+    return { name, path, enddate, sans };
+  });
+}
 
-    const pill = document.createElement('span');
-    if (days === null) { pill.className = 'ax-pill'; pill.textContent = 'unknown'; }
-    else if (days < 0)   { pill.className = 'ax-pill ax-pill-error';   pill.textContent = `expired ${Math.abs(days)}d`; }
-    else if (days < 14)  { pill.className = 'ax-pill ax-pill-warn';    pill.textContent = `${days}d left`; }
-    else                 { pill.className = 'ax-pill ax-pill-success'; pill.textContent = `${days}d left`; }
-    pill.title = enddate || '';
+function renderCertRow(c) {
+  const expiryDate = c.enddate ? new Date(c.enddate) : null;
+  const days = expiryDate && !isNaN(expiryDate.getTime())
+    ? Math.floor((expiryDate.getTime() - Date.now()) / 86400000)
+    : null;
 
-    const actions = document.createElement('div');
-    actions.className = 'actions';
-    actions.appendChild(mkBtn('Renew', 'ax-btn-outline ax-btn-sm', () => renewCert(d)));
-    actions.appendChild(mkBtn('Details', 'ax-btn-ghost ax-btn-sm', async () => {
-      const full = await sudoSafe(`openssl x509 -in ${shellQuote(certPath)} -noout -text`);
-      showInfo(d, full.stdout || (full.stderr || '').trim());
-    }));
-    row.append(name, pill, actions);
-    el.appendChild(row);
-  }
+  const row = document.createElement('div');
+  row.className = 'row';
+
+  const name = document.createElement('div');
+  name.className = 'name';
+  const t = document.createElement('div');
+  t.className = 'ax-text';
+  t.textContent = c.name;
+  const sub = document.createElement('div');
+  sub.className = 'ax-text-muted';
+  sub.style.fontSize = '11px';
+  sub.textContent = c.sans.length ? ('SAN: ' + c.sans.join(', ')) : '';
+  name.append(t, sub);
+
+  const pill = document.createElement('span');
+  if (days === null)      { pill.className = 'ax-pill';                  pill.textContent = 'unknown'; }
+  else if (days < 0)      { pill.className = 'ax-pill ax-pill-error';    pill.textContent = `expired ${Math.abs(days)}d`; }
+  else if (days < 14)     { pill.className = 'ax-pill ax-pill-warn';     pill.textContent = `${days}d left`; }
+  else                    { pill.className = 'ax-pill ax-pill-success';  pill.textContent = `${days}d left`; }
+  pill.title = c.enddate || '';
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  actions.appendChild(mkBtn('Renew', 'ax-btn-outline ax-btn-sm', () => renewCert(c.name)));
+  actions.appendChild(mkBtn('Details', 'ax-btn-ghost ax-btn-sm', async () => {
+    const full = await sudoSafe(`openssl x509 -in ${shellQuote(c.path)} -noout -text`);
+    showInfo(c.name, full.stdout || (full.stderr || '').trim());
+  }));
+  row.append(name, pill, actions);
+  return row;
 }
 
 async function renewCert(domain) {
