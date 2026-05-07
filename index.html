@@ -153,6 +153,32 @@
     }
     .cselect-trigger:hover { border-color: var(--color-border-strong); }
     .cselect-trigger.open { border-color: var(--color-accent); }
+    .cselect-trigger.loading {
+      cursor: wait;
+      pointer-events: none;
+    }
+    .cselect-trigger.loading .label { color: var(--color-text-muted); }
+    .cselect-trigger.loading .chev { display: none; }
+    .cselect-trigger.loading::after {
+      content: "";
+      width: 12px; height: 12px;
+      border: 2px solid var(--color-border-subtle);
+      border-top-color: var(--color-accent);
+      border-radius: 50%;
+      animation: cselect-spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes cselect-spin { to { transform: rotate(360deg); } }
+    .log-loading {
+      display: inline-block;
+      width: 11px; height: 11px;
+      border: 2px solid var(--color-border-subtle);
+      border-top-color: var(--color-accent);
+      border-radius: 50%;
+      vertical-align: -2px;
+      margin-right: 8px;
+      animation: cselect-spin 0.8s linear infinite;
+    }
     .cselect-trigger .label {
       flex: 1; min-width: 0;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1469,6 +1495,18 @@ function createCSelect({ wrap, trigger, menu, placeholder, emptyText, onPick }) 
       if (onPick) onPick(option.path, option);
     },
 
+    setLoading(loading, text) {
+      this.loading = !!loading;
+      trigger.classList.toggle('loading', this.loading);
+      if (this.loading) {
+        this.closeMenu();
+        trigger.querySelector('.label').textContent = text || 'Loading…';
+        trigger.title = '';
+      } else {
+        this.renderTrigger();
+      }
+    },
+
     toggle() { this.open ? this.closeMenu() : this.openMenu(); },
 
     openMenu() {
@@ -1545,6 +1583,11 @@ function createCSelect({ wrap, trigger, menu, placeholder, emptyText, onPick }) 
 
 // ---------- Logs tab ----------
 let liveTimer = null;
+// Tracks the path whose contents are currently displayed. Used so the
+// "Loading…" placeholder only appears when the user picks a different
+// log — live-tail and manual refreshes on the same path swap content
+// in atomically without an intermediate flash.
+let logLoadedPath = null;
 
 // Selection is made only by an explicit user click — there is no
 // auto-pick on populate. Instantiated in wire().
@@ -1552,6 +1595,7 @@ let LogSelect  = null;
 let MainSelect = null;
 
 async function populateLogSources() {
+  if (LogSelect) LogSelect.setLoading(true, 'Loading logs…');
   const sources = [];
 
   // Global access/error logs (and other_vhosts_access if present).
@@ -1583,13 +1627,31 @@ async function populateLogSources() {
   }
 
   LogSelect.setOptions(sources);
+  LogSelect.setLoading(false);
+  // If a previously-selected entry no longer exists, also clear the
+  // "loaded" marker so the next pick shows its loading state.
+  if (!LogSelect.value) logLoadedPath = null;
   // Intentionally no auto-pick — the log only loads when the user
   // chooses one from the menu.
 }
 
 async function refreshLog() {
   const path = LogSelect.value;
-  if (!path) { $('log-output').textContent = 'Select a log to begin.'; return; }
+  const out = $('log-output');
+  if (!path) {
+    out.textContent = 'Select a log to begin.';
+    logLoadedPath = null;
+    return;
+  }
+  // Show a spinner only when the user has just picked a different
+  // log; live-tail and manual refresh on the same path replace
+  // content silently.
+  if (logLoadedPath !== path) {
+    out.innerHTML = '';
+    const sp = document.createElement('span'); sp.className = 'log-loading';
+    const txt = document.createElement('span'); txt.className = 'ax-text-muted'; txt.textContent = 'Loading ' + path + '…';
+    out.append(sp, txt);
+  }
   const lines = parseInt($('log-lines').value, 10) || SETTINGS.logLines;
   const grep = ($('log-grep').value || '').trim();
   let cmd = `tail -n ${lines} ${shellQuote(path)}`;
@@ -1597,10 +1659,13 @@ async function refreshLog() {
   // Apache logs are usually root-readable for error.log; access.log is often root or adm group.
   const r = await sudoSafe(cmd);
   if (r._cancelled) return;
-  const out = r.stdout || '';
-  $('log-output').textContent = out || (r.stderr || '').trim() || '(empty)';
-  const el = $('log-output');
-  el.scrollTop = el.scrollHeight;
+  // Bail if the user picked a different log while this fetch was in
+  // flight — don't overwrite their newer view with stale content.
+  if (LogSelect.value !== path) return;
+  const body = r.stdout || '';
+  out.textContent = body || (r.stderr || '').trim() || '(empty)';
+  logLoadedPath = path;
+  out.scrollTop = out.scrollHeight;
 }
 
 function startLiveTail() {
