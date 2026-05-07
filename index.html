@@ -192,11 +192,11 @@
       color: var(--color-text-primary);
     }
     .cselect-option.active {
-      background: var(--color-accent-soft, var(--color-accent-tint));
-      color: var(--color-accent);
+      background: var(--color-surface-2);
+      color: var(--color-text-primary);
     }
     .cselect-option.active:hover {
-      background: var(--color-accent-soft, var(--color-accent-tint));
+      background: var(--color-surface-2);
     }
     .cselect-option .opt-label {
       flex: 1; min-width: 0;
@@ -210,10 +210,6 @@
       color: var(--color-text-muted);
       font-family: var(--font-mono);
       flex-shrink: 0;
-    }
-    .cselect-option.active .opt-tag {
-      background: var(--color-accent-deep, var(--color-accent));
-      color: var(--color-on-accent);
     }
     .cselect-empty {
       padding: 12px;
@@ -340,12 +336,13 @@
 
       <section class="panel" data-tab="main" hidden>
         <div class="toolbar">
-          <select class="ax-select" id="main-file" style="flex:1;">
-            <option value="/etc/apache2/apache2.conf">apache2.conf</option>
-            <option value="/etc/apache2/ports.conf">ports.conf</option>
-            <option value="/etc/apache2/envvars">envvars</option>
-            <option value="/etc/apache2/magic">magic</option>
-          </select>
+          <div class="cselect" id="main-file-wrap" style="flex:1;">
+            <button class="cselect-trigger placeholder" id="main-file-trigger" type="button">
+              <span class="label">Pick a file…</span>
+              <span class="chev">▾</span>
+            </button>
+            <div class="cselect-menu" id="main-file-menu" hidden></div>
+          </div>
           <button class="ax-btn ax-btn-ghost ax-btn-sm" id="main-revert">Revert</button>
           <button class="ax-btn ax-btn-ghost ax-btn-sm" id="main-diff">Diff</button>
           <button class="ax-btn ax-btn-primary ax-btn-sm" id="main-save">Save</button>
@@ -844,7 +841,8 @@ function activateTab(id) {
   if (id === 'ssl')      loadCerts();
   if (id === 'main')     loadMain();
   if (id === 'status')   loadStatusTab();
-  if (id !== 'logs')   { stopLiveTail(); LogSelect.closeMenu(); }
+  if (id !== 'logs') stopLiveTail();
+  for (const s of _cselects) s.closeMenu();
 }
 
 // ---------- Backups ----------
@@ -1423,89 +1421,135 @@ function renderModuleRow(name, isEnabled) {
   return row;
 }
 
+// ---------- Custom select factory (cselect) ----------
+//
+// A reusable dropdown that mirrors the host's design tokens. Built on
+// the markup pattern:
+//   <div class="cselect" id="..-wrap">
+//     <button class="cselect-trigger placeholder" id="..-trigger">
+//       <span class="label">…</span><span class="chev">▾</span>
+//     </button>
+//     <div class="cselect-menu" id="..-menu" hidden></div>
+//   </div>
+//
+// Options are objects { path, label, tag? }. `path` is the value
+// identifier; `tag` is optional — when omitted the option (and the
+// trigger when selected) renders without the small tag pill.
+//
+const _cselects = [];
+
+function createCSelect({ wrap, trigger, menu, placeholder, emptyText, onPick }) {
+  const inst = {
+    options: [],
+    value: null,
+    selectedId: null,    // identifies which specific option is picked,
+                         // independent of path (so two options sharing a
+                         // path but a different tag don't both light up).
+    open: false,
+
+    setOptions(opts) {
+      this.options = (opts || []).map(o => ({
+        ...o,
+        _id: o.id != null ? String(o.id)
+            : (o.tag ? `${o.tag}:${o.path}` : String(o.path)),
+      }));
+      if (this.selectedId && !this.options.some(o => o._id === this.selectedId)) {
+        this.selectedId = null;
+        this.value = null;
+      }
+      this.render();
+    },
+
+    pick(option) {
+      if (!option) return;
+      this.value = option.path;
+      this.selectedId = option._id;
+      this.closeMenu();
+      this.renderTrigger();
+      if (onPick) onPick(option.path, option);
+    },
+
+    toggle() { this.open ? this.closeMenu() : this.openMenu(); },
+
+    openMenu() {
+      if (!this.options.length) return;
+      this.open = true;
+      trigger.classList.add('open');
+      menu.hidden = false;
+      this.renderMenu();
+    },
+
+    closeMenu() {
+      this.open = false;
+      trigger.classList.remove('open');
+      menu.hidden = true;
+    },
+
+    renderTrigger() {
+      const lbl = trigger.querySelector('.label');
+      const opt = this.selectedId ? this.options.find(o => o._id === this.selectedId) : null;
+      if (opt) {
+        trigger.classList.remove('placeholder');
+        lbl.textContent = opt.tag ? `${opt.tag} · ${opt.label}` : opt.label;
+        trigger.title = opt.path;
+      } else {
+        trigger.classList.add('placeholder');
+        lbl.textContent = placeholder || 'Pick…';
+        trigger.title = '';
+      }
+    },
+
+    renderMenu() {
+      menu.innerHTML = '';
+      if (!this.options.length) {
+        const e = document.createElement('div');
+        e.className = 'cselect-empty';
+        e.textContent = emptyText || '(no items)';
+        menu.appendChild(e);
+        return;
+      }
+      for (const o of this.options) {
+        const el = document.createElement('div');
+        el.className = 'cselect-option' + (o._id === this.selectedId ? ' active' : '');
+        if (o.tag) {
+          const tg = document.createElement('span');
+          tg.className = 'opt-tag';
+          tg.textContent = o.tag;
+          el.appendChild(tg);
+        }
+        const lb = document.createElement('span');
+        lb.className = 'opt-label';
+        lb.textContent = o.label;
+        lb.title = o.path;
+        el.appendChild(lb);
+        el.addEventListener('click', () => this.pick(o));
+        menu.appendChild(el);
+      }
+    },
+
+    render() {
+      this.renderTrigger();
+      if (this.open) this.renderMenu();
+    },
+  };
+
+  trigger.addEventListener('click', (e) => { e.stopPropagation(); inst.toggle(); });
+  document.addEventListener('click', (e) => {
+    if (!inst.open) return;
+    if (!wrap.contains(e.target)) inst.closeMenu();
+  });
+
+  _cselects.push(inst);
+  return inst;
+}
+
 // ---------- Logs tab ----------
 let liveTimer = null;
 
-// Custom select for the log source. Values come from
-// `populateLogSources`; a selection is made only by an explicit user
-// click — there is no auto-pick on populate.
-const LogSelect = {
-  options: [],   // [{ path, label, tag }]
-  value: null,
-  open: false,
-
-  setOptions(opts) {
-    this.options = opts;
-    // Drop a stale selection if the file is no longer enumerated.
-    if (this.value && !opts.some(o => o.path === this.value)) this.value = null;
-    this.render();
-  },
-
-  pick(path) {
-    this.value = path;
-    this.closeMenu();
-    this.renderTrigger();
-    refreshLog();
-  },
-
-  toggle() { this.open ? this.closeMenu() : this.openMenu(); },
-
-  openMenu() {
-    if (!this.options.length) return;
-    this.open = true;
-    $('log-source-trigger').classList.add('open');
-    $('log-source-menu').hidden = false;
-    this.renderMenu();
-  },
-
-  closeMenu() {
-    this.open = false;
-    $('log-source-trigger').classList.remove('open');
-    $('log-source-menu').hidden = true;
-  },
-
-  renderTrigger() {
-    const t = $('log-source-trigger');
-    const lbl = t.querySelector('.label');
-    if (this.value) {
-      const opt = this.options.find(o => o.path === this.value);
-      t.classList.remove('placeholder');
-      lbl.textContent = opt ? `${opt.tag} · ${opt.label}` : this.value;
-      t.title = (opt && opt.path) || this.value;
-    } else {
-      t.classList.add('placeholder');
-      lbl.textContent = 'Pick a log…';
-      t.title = '';
-    }
-  },
-
-  renderMenu() {
-    const menu = $('log-source-menu');
-    menu.innerHTML = '';
-    if (!this.options.length) {
-      const e = document.createElement('div');
-      e.className = 'cselect-empty';
-      e.textContent = '(no logs found)';
-      menu.appendChild(e);
-      return;
-    }
-    for (const o of this.options) {
-      const el = document.createElement('div');
-      el.className = 'cselect-option' + (o.path === this.value ? ' active' : '');
-      const tg = document.createElement('span'); tg.className = 'opt-tag'; tg.textContent = o.tag;
-      const lb = document.createElement('span'); lb.className = 'opt-label'; lb.textContent = o.label;
-      lb.title = o.path;
-      el.append(tg, lb);
-      el.addEventListener('click', () => this.pick(o.path));
-      menu.appendChild(el);
-    }
-  },
-
-  render() {
-    this.renderTrigger();
-    if (this.open) this.renderMenu();
-  },
-};
+// Selection is made only by an explicit user click — there is no
+// auto-pick on populate. Instantiated in wire().
+let LogSelect  = null;
+let MainSelect = null;
 
 async function populateLogSources() {
   const sources = [];
@@ -1691,7 +1735,13 @@ async function issueCert() {
 // ---------- Main config tab ----------
 let mainOriginal = '';
 async function loadMain() {
-  const path = $('main-file').value;
+  const path = MainSelect && MainSelect.value;
+  if (!path) {
+    $('main-content').value = '';
+    $('main-content').placeholder = 'Select a file to begin.';
+    mainOriginal = '';
+    return;
+  }
   $('main-content').value = 'Loading…';
   const r = await exec(`cat ${shellQuote(path)}`);
   if (r.exitCode !== 0) {
@@ -1704,8 +1754,8 @@ async function loadMain() {
 }
 
 async function saveMain() {
-  const path = $('main-file').value;
-  if (!path) return;
+  const path = MainSelect && MainSelect.value;
+  if (!path) { ax().ui.notify('Pick a file first', { tone: 'warn' }); return; }
   const ok = await confirmDialog('Save main config', `Overwrite ${path}? It will be auto-tested and rolled back on failure.`, { okLabel: 'Save', danger: false });
   if (!ok) return;
   setOutput('Saving…');
@@ -1722,7 +1772,8 @@ async function saveMain() {
 }
 
 async function diffMain() {
-  const path = $('main-file').value;
+  const path = MainSelect && MainSelect.value;
+  if (!path) { ax().ui.notify('Pick a file first', { tone: 'warn' }); return; }
   const tmp = `/tmp/.apache2-mgr-diff-main-${Date.now()}.txt`;
   try { await ax().sftp.write(tmp, new TextEncoder().encode($('main-content').value)); }
   catch (e) { ax().ui.notify('diff failed: ' + (e.message || e), { tone: 'error' }); return; }
@@ -1894,10 +1945,13 @@ function wire() {
   $('modules-refresh').addEventListener('click', loadModules);
 
   // Logs
-  $('log-source-trigger').addEventListener('click', (e) => { e.stopPropagation(); LogSelect.toggle(); });
-  document.addEventListener('click', (e) => {
-    if (!LogSelect.open) return;
-    if (!$('log-source-wrap').contains(e.target)) LogSelect.closeMenu();
+  LogSelect = createCSelect({
+    wrap:        $('log-source-wrap'),
+    trigger:     $('log-source-trigger'),
+    menu:        $('log-source-menu'),
+    placeholder: 'Pick a log…',
+    emptyText:   '(no logs found)',
+    onPick:      () => refreshLog(),
   });
   $('logs-refresh-list').addEventListener('click', populateLogSources);
   $('log-refresh').addEventListener('click', refreshLog);
@@ -1914,7 +1968,19 @@ function wire() {
   $('cert-modal').addEventListener('click', (e) => { if (e.target === $('cert-modal')) closeIssueModal(); });
 
   // Main
-  $('main-file').addEventListener('change', loadMain);
+  MainSelect = createCSelect({
+    wrap:        $('main-file-wrap'),
+    trigger:     $('main-file-trigger'),
+    menu:        $('main-file-menu'),
+    placeholder: 'Pick a file…',
+    onPick:      () => loadMain(),
+  });
+  MainSelect.setOptions([
+    { path: '/etc/apache2/apache2.conf', label: 'apache2.conf' },
+    { path: '/etc/apache2/ports.conf',   label: 'ports.conf' },
+    { path: '/etc/apache2/envvars',      label: 'envvars' },
+    { path: '/etc/apache2/magic',        label: 'magic' },
+  ]);
   $('main-revert').addEventListener('click', () => { $('main-content').value = mainOriginal; });
   $('main-diff').addEventListener('click', diffMain);
   $('main-save').addEventListener('click', saveMain);
@@ -1946,7 +2012,9 @@ function wire() {
   // Global keys
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (LogSelect.open) { LogSelect.closeMenu(); return; }
+    for (const s of _cselects) {
+      if (s.open) { s.closeMenu(); return; }
+    }
     if (!$('confirm-modal').hidden) { settleConfirm(false); return; }
     if (!$('reload-prompt').hidden) { settleReload(false); return; }
     if (!$('info-modal').hidden) { hideInfo(); return; }
