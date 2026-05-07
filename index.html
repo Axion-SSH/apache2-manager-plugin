@@ -244,22 +244,7 @@
       text-align: center;
     }
 
-    /* ---------- Status / pills ---------- */
-    .pill-row { display: flex; gap: 6px; flex-wrap: wrap; }
-    .stat-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-      gap: 8px;
-    }
-    .stat-card {
-      padding: 10px 12px;
-      border-radius: var(--radius-sm);
-      background: var(--color-surface-1);
-      border: 1px solid var(--color-border-subtle);
-    }
-    .stat-card .k { font-size: 11px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
-    .stat-card .v { font-size: 18px; color: var(--color-accent); font-family: var(--font-mono); font-variant-numeric: tabular-nums; margin-top: 2px; }
-
+    /* ---------- Diff colors ---------- */
     .diff-add { color: var(--color-success); }
     .diff-del { color: var(--color-error); }
     .diff-hunk { color: var(--color-accent); }
@@ -382,13 +367,6 @@
           <button class="ax-btn ax-btn-ghost ax-btn-sm" id="status-refresh">Refresh</button>
         </div>
         <div class="ax-stack" style="overflow:auto; min-height: 0;">
-          <div>
-            <span class="ax-label">mod_status</span>
-            <div class="stat-grid" id="modstatus-grid">
-              <div class="stat-card"><div class="k">—</div><div class="v">—</div></div>
-            </div>
-            <pre class="ax-code" id="modstatus-raw" hidden style="margin-top: 6px;"></pre>
-          </div>
           <div>
             <span class="ax-label">MPM &amp; workers</span>
             <pre class="ax-code" id="workers-info">…</pre>
@@ -1862,58 +1840,10 @@ async function diffMain() {
 }
 
 // ---------- Status tab ----------
-let statusTimer = null;
-
 async function loadStatusTab() {
   $('status-summary').textContent = 'Loading…';
-  await Promise.all([loadModStatus(), loadWorkers(), loadConflicts()]);
+  await Promise.all([loadWorkers(), loadConflicts()]);
   $('status-summary').textContent = 'Updated ' + new Date().toLocaleTimeString();
-  if (statusTimer) clearInterval(statusTimer);
-  if (SETTINGS.autoPollStatus) {
-    statusTimer = setInterval(() => {
-      if (document.querySelector('section.panel[data-tab="status"]')?.hidden === false) {
-        loadModStatus();
-      }
-    }, Math.max(2000, SETTINGS.liveIntervalMs * 2));
-  }
-}
-
-async function loadModStatus() {
-  const grid = $('modstatus-grid');
-  grid.innerHTML = '';
-  const r = await exec('curl -fsS http://127.0.0.1/server-status?auto 2>/dev/null || true');
-  const text = (r.stdout || '').trim();
-  if (!text) {
-    $('modstatus-raw').hidden = false;
-    $('modstatus-raw').textContent =
-      'mod_status appears unavailable.\n' +
-      'Enable it: a2enmod status, then ensure ExtendedStatus On and a /server-status handler.\n' +
-      'A typical /etc/apache2/mods-enabled/status.conf already provides this for localhost.';
-    return;
-  }
-  $('modstatus-raw').hidden = true;
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  const fields = {};
-  for (const l of lines) {
-    const i = l.indexOf(':');
-    if (i > 0) fields[l.slice(0, i).trim()] = l.slice(i + 1).trim();
-  }
-  function card(k, v) {
-    const c = document.createElement('div'); c.className = 'stat-card';
-    const kk = document.createElement('div'); kk.className = 'k'; kk.textContent = k;
-    const vv = document.createElement('div'); vv.className = 'v'; vv.textContent = v == null ? '—' : String(v);
-    c.append(kk, vv); return c;
-  }
-  grid.appendChild(card('Total accesses',    fields['Total Accesses']));
-  grid.appendChild(card('Total kBytes',      fields['Total kBytes']));
-  grid.appendChild(card('Uptime',            fields['Uptime'] ? fields['Uptime'] + 's' : '—'));
-  grid.appendChild(card('Requests/sec',      fields['ReqPerSec']));
-  grid.appendChild(card('Bytes/sec',         fields['BytesPerSec']));
-  grid.appendChild(card('Bytes/req',         fields['BytesPerReq']));
-  grid.appendChild(card('Busy workers',      fields['BusyWorkers']));
-  grid.appendChild(card('Idle workers',      fields['IdleWorkers']));
-  if (fields['CPULoad']) grid.appendChild(card('CPU load', fields['CPULoad']));
-  if (fields['Load1'])   grid.appendChild(card('Load 1m',  fields['Load1']));
 }
 
 async function loadWorkers() {

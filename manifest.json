@@ -37,7 +37,6 @@
     "readlink",
     "date",
     "ps",
-    "curl",
     "openssl",
     "systemctl",
     "apache2ctl",
