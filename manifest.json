@@ -1,0 +1,94 @@
+{
+  "author": "Axion Team",
+  "description": "Manage apache2: sites, confs, modules, logs, SSL certs, and the main config — with auto-test, diff, backups, and live status.",
+  "id": "apache2-manager-plugin",
+  "name": "Apache2 Manager",
+  "icon": "icon.png",
+  "permissions": [
+    "ssh.exec",
+    "ssh.sudo",
+    "sftp.write"
+  ],
+  "presentations": {
+    "plugin": {
+      "defaultSize": {
+        "h": 680,
+        "w": 880
+      },
+      "entry": "index.html"
+    }
+  },
+  "requirements": [
+    "ls",
+    "cat",
+    "tail",
+    "head",
+    "wc",
+    "grep",
+    "sed",
+    "diff",
+    "cp",
+    "mv",
+    "rm",
+    "ln",
+    "mkdir",
+    "find",
+    "stat",
+    "readlink",
+    "date",
+    "ps",
+    "curl",
+    "openssl",
+    "systemctl",
+    "apache2ctl",
+    "a2ensite",
+    "a2dissite",
+    "a2enconf",
+    "a2disconf",
+    "a2enmod",
+    "a2dismod",
+    "a2query",
+    "certbot"
+  ],
+  "sdk": "1",
+  "settings": [
+    {
+      "name": "logLines",
+      "title": "Log lines to tail",
+      "type": "number",
+      "default": 200,
+      "min": 20,
+      "max": 5000,
+      "step": 20,
+      "description": "How many lines to fetch when opening a log."
+    },
+    {
+      "name": "liveIntervalMs",
+      "title": "Live refresh interval (ms)",
+      "type": "number",
+      "default": 2500,
+      "min": 500,
+      "max": 60000,
+      "step": 500,
+      "description": "Polling interval for live log tail and status auto-refresh."
+    },
+    {
+      "name": "backupCount",
+      "title": "Backups to keep per file",
+      "type": "number",
+      "default": 10,
+      "min": 0,
+      "max": 100,
+      "step": 1,
+      "description": "Older backups beyond this are pruned. 0 disables backups."
+    },
+    {
+      "name": "autoPollStatus",
+      "title": "Auto-poll daemon status",
+      "type": "boolean",
+      "default": true,
+      "description": "Refresh the daemon status pill periodically."
+    }
+  ],
+  "version": "1.1.0"
+}

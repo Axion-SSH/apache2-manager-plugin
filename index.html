@@ -1,0 +1,1808 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Apache2 Manager</title>
+  <style>
+    body { margin: 0; }
+    [hidden] { display: none !important; }
+
+    /* ---------- Layout ---------- */
+    .app {
+      display: flex; flex-direction: column;
+      height: 100vh;
+      gap: 12px;
+      padding: 16px 18px;
+      box-sizing: border-box;
+    }
+    .top {
+      display: flex; flex-direction: column; gap: 12px;
+      flex-shrink: 0;
+    }
+    .body {
+      flex: 1; min-height: 0;
+      display: flex; flex-direction: column;
+    }
+    .panel {
+      flex: 1; min-height: 0;
+      display: flex; flex-direction: column;
+      gap: 10px;
+    }
+
+    /* ---------- Tab bar ---------- */
+    .tabs {
+      display: flex; gap: 4px;
+      border-bottom: 1px solid var(--color-border-subtle);
+      flex-shrink: 0;
+    }
+    .tabs button {
+      background: transparent;
+      border: 0;
+      color: var(--color-text-secondary);
+      padding: 8px 14px;
+      cursor: pointer;
+      font-family: inherit; font-size: 12px;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+    }
+    .tabs button:hover { color: var(--color-text-primary); }
+    .tabs button.active {
+      color: var(--color-accent);
+      border-bottom-color: var(--color-accent);
+    }
+
+    /* ---------- Daemon panel ---------- */
+    .daemon { padding: 10px 14px; }
+    #output {
+      max-height: 160px;
+      overflow: auto;
+      margin: 0;
+      font-size: 12px;
+    }
+
+    /* ---------- Lists ---------- */
+    .list {
+      display: flex; flex-direction: column;
+      gap: 6px;
+      overflow: auto;
+      flex: 1;
+      padding-right: 4px;
+    }
+    .row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--color-surface-1);
+      border: 1px solid var(--color-border-subtle);
+    }
+    .row .name {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .row .actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .row .meta {
+      font-size: 11px;
+      color: var(--color-text-muted);
+      margin-right: 8px;
+    }
+
+    .toolbar {
+      display: flex; align-items: center; gap: 8px;
+      flex-shrink: 0;
+    }
+    .toolbar .ax-input {
+      flex: 1;
+    }
+
+    /* ---------- Modals ---------- */
+    .modal-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000;
+      padding: 24px;
+    }
+    .modal-card {
+      width: min(680px, 100%);
+      max-height: 100%;
+      padding: 20px;
+      display: flex; flex-direction: column; gap: 10px;
+      overflow: hidden;
+    }
+    .modal-card.sm { width: min(420px, 100%); }
+    .modal-card.lg { width: min(840px, 100%); }
+    .modal-card .ax-textarea {
+      flex: 1;
+      min-height: 260px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      white-space: pre;
+    }
+    .modal-card pre.scroll {
+      flex: 1;
+      max-height: 60vh;
+      overflow: auto;
+      margin: 0;
+      font-size: 12px;
+    }
+
+    /* ---------- Logs ---------- */
+    #log-output {
+      flex: 1;
+      overflow: auto;
+      margin: 0;
+      font-size: 12px;
+      white-space: pre;
+      min-height: 0;
+    }
+
+    /* ---------- Status / pills ---------- */
+    .pill-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 8px;
+    }
+    .stat-card {
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--color-surface-1);
+      border: 1px solid var(--color-border-subtle);
+    }
+    .stat-card .k { font-size: 11px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .stat-card .v { font-size: 18px; color: var(--color-accent); font-family: var(--font-mono); font-variant-numeric: tabular-nums; margin-top: 2px; }
+
+    .diff-add { color: var(--color-success); }
+    .diff-del { color: var(--color-error); }
+    .diff-hunk { color: var(--color-accent); }
+  </style>
+</head>
+<body>
+  <main class="app">
+
+    <!-- ===== Top: header + daemon ===== -->
+    <div class="top">
+      <header class="ax-row" style="justify-content: space-between;">
+        <h1 class="ax-h1">Apache2</h1>
+        <div class="ax-row" style="gap: 6px;">
+          <span class="ax-pill" id="status">…</span>
+          <button class="ax-btn ax-btn-ghost ax-btn-sm" id="refresh-all" title="Refresh everything">↻</button>
+        </div>
+      </header>
+
+      <section class="ax-surface ax-stack daemon">
+        <div class="ax-row" style="justify-content: space-between;">
+          <span class="ax-label">Daemon</span>
+          <div class="ax-row" style="gap: 6px;">
+            <button class="ax-btn ax-btn-ghost ax-btn-sm" id="test">Test config</button>
+            <button class="ax-btn ax-btn-outline ax-btn-sm" id="reload">Reload</button>
+            <button class="ax-btn ax-btn-outline ax-btn-sm" id="restart">Restart</button>
+          </div>
+        </div>
+        <pre class="ax-code" id="output" hidden></pre>
+      </section>
+
+      <nav class="tabs" id="tabs">
+        <button data-tab="sites" class="active">Sites</button>
+        <button data-tab="configs">Configs</button>
+        <button data-tab="modules">Modules</button>
+        <button data-tab="logs">Logs</button>
+        <button data-tab="ssl">SSL</button>
+        <button data-tab="main">Main</button>
+        <button data-tab="status">Status</button>
+      </nav>
+    </div>
+
+    <!-- ===== Body: tab panels ===== -->
+    <div class="body">
+
+      <section class="panel" data-tab="sites">
+        <div class="toolbar">
+          <input class="ax-input" id="sites-filter" placeholder="Filter sites…" autocomplete="off" />
+          <button class="ax-btn ax-btn-ghost ax-btn-sm" id="sites-refresh">Refresh</button>
+          <button class="ax-btn ax-btn-primary ax-btn-sm" id="sites-add">New site ▾</button>
+        </div>
+        <div class="list" id="sites"><div class="ax-empty"><div>Loading…</div></div></div>
+      </section>
+
+      <section class="panel" data-tab="configs" hidden>
+        <div class="toolbar">
+          <input class="ax-input" id="configs-filter" placeholder="Filter confs…" autocomplete="off" />
+          <button class="ax-btn ax-btn-ghost ax-btn-sm" id="configs-refresh">Refresh</button>
+          <button class="ax-btn ax-btn-primary ax-btn-sm" id="configs-add">New conf</button>
+        </div>
+        <div class="list" id="configs"><div class="ax-empty"><div>Loading…</div></div></div>
+      </section>
+
+      <section class="panel" data-tab="modules" hidden>
+        <div class="toolbar">
+          <input class="ax-input" id="modules-filter" placeholder="Filter modules…" autocomplete="off" />
+          <button class="ax-btn ax-btn-ghost ax-btn-sm" id="modules-refresh">Refresh</button>
+        </div>
+        <div class="list" id="modules"><div class="ax-empty"><div>Loading…</div></div></div>
+      </section>
+
+      <section class="panel" data-tab="logs" hidden>
+        <div class="toolbar">
+          <select class="ax-select" id="log-source" style="flex:1;"></select>
+          <button class="ax-btn ax-btn-ghost ax-btn-sm" id="logs-refresh-list">↻ list</button>
+        </div>
+        <div class="toolbar">
+          <input class="ax-input" id="log-grep" placeholder="grep filter (optional, regex)" autocomplete="off" style="flex:2;" />
+          <input class="ax-input" id="log-lines" placeholder="lines" autocomplete="off" style="flex:0 0 80px;" />
+          <button class="ax-btn ax-btn-ghost ax-btn-sm" id="log-refresh">Refresh</button>
+          <button class="ax-btn ax-btn-outline ax-btn-sm" id="log-live">Live</button>
+        </div>
+        <pre class="ax-code" id="log-output">Select a log to begin.</pre>
+      </section>
+
+      <section class="panel" data-tab="ssl" hidden>
+        <div class="toolbar">
+          <span class="ax-text-muted" id="ssl-summary" style="flex:1;">Loading…</span>
+          <button class="ax-btn ax-btn-ghost ax-btn-sm" id="ssl-refresh">Refresh</button>
+          <button class="ax-btn ax-btn-outline ax-btn-sm" id="ssl-renew-all">Renew all</button>
+          <button class="ax-btn ax-btn-primary ax-btn-sm" id="ssl-issue">Issue cert</button>
+        </div>
+        <div class="list" id="ssl"><div class="ax-empty"><div>Loading…</div></div></div>
+      </section>
+
+      <section class="panel" data-tab="main" hidden>
+        <div class="toolbar">
+          <select class="ax-select" id="main-file" style="flex:1;">
+            <option value="/etc/apache2/apache2.conf">apache2.conf</option>
+            <option value="/etc/apache2/ports.conf">ports.conf</option>
+            <option value="/etc/apache2/envvars">envvars</option>
+            <option value="/etc/apache2/magic">magic</option>
+          </select>
+          <button class="ax-btn ax-btn-ghost ax-btn-sm" id="main-revert">Revert</button>
+          <button class="ax-btn ax-btn-ghost ax-btn-sm" id="main-diff">Diff</button>
+          <button class="ax-btn ax-btn-primary ax-btn-sm" id="main-save">Save</button>
+        </div>
+        <textarea class="ax-textarea" id="main-content" spellcheck="false" style="flex:1;"></textarea>
+      </section>
+
+      <section class="panel" data-tab="status" hidden>
+        <div class="toolbar">
+          <span class="ax-text-muted" id="status-summary" style="flex:1;">Loading…</span>
+          <button class="ax-btn ax-btn-ghost ax-btn-sm" id="status-refresh">Refresh</button>
+        </div>
+        <div class="ax-stack" style="overflow:auto; min-height: 0;">
+          <div>
+            <span class="ax-label">mod_status</span>
+            <div class="stat-grid" id="modstatus-grid">
+              <div class="stat-card"><div class="k">—</div><div class="v">—</div></div>
+            </div>
+            <pre class="ax-code" id="modstatus-raw" hidden style="margin-top: 6px;"></pre>
+          </div>
+          <div>
+            <span class="ax-label">MPM &amp; workers</span>
+            <pre class="ax-code" id="workers-info">…</pre>
+          </div>
+          <div>
+            <span class="ax-label">Conflicts (Listen / ServerName)</span>
+            <div class="list" id="conflicts" style="max-height: 240px;"></div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- ============ Modals ============ -->
+
+  <!-- Edit (sites / confs / new file) -->
+  <div id="edit-modal" class="modal-backdrop" hidden>
+    <div class="ax-glass modal-card">
+      <header class="ax-row" style="justify-content: space-between;">
+        <h2 class="ax-h2" id="edit-title">New</h2>
+        <span class="ax-text-muted ax-mono" id="edit-path"></span>
+      </header>
+      <label class="ax-label">Name</label>
+      <input class="ax-input" id="edit-name" placeholder="example.com.conf" autocomplete="off" spellcheck="false" />
+      <label class="ax-label">
+        Config
+        <span class="ax-text-muted" id="edit-template-row" style="margin-left:8px;" hidden>
+          template:
+          <select class="ax-select" id="edit-template" style="display:inline-block; height: 24px; padding: 2px 6px; font-size: 12px;"></select>
+        </span>
+      </label>
+      <textarea class="ax-textarea" id="edit-content" spellcheck="false"></textarea>
+      <div class="ax-row" style="justify-content: space-between; gap: 6px;">
+        <div class="ax-row" style="gap: 6px;">
+          <button class="ax-btn ax-btn-ghost ax-btn-sm" id="edit-diff" hidden>Diff</button>
+          <button class="ax-btn ax-btn-ghost ax-btn-sm" id="edit-test" hidden>Test this site</button>
+        </div>
+        <div class="ax-row" style="gap: 6px;">
+          <button class="ax-btn ax-btn-ghost" id="edit-cancel">Cancel</button>
+          <button class="ax-btn ax-btn-primary" id="edit-save">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm (yes/no) -->
+  <div id="confirm-modal" class="modal-backdrop" hidden>
+    <div class="ax-glass modal-card sm">
+      <h2 class="ax-h2" id="confirm-title">Confirm</h2>
+      <p class="ax-text" id="confirm-message"></p>
+      <div class="ax-row" style="justify-content: flex-end; gap: 6px;">
+        <button class="ax-btn ax-btn-ghost" id="confirm-cancel">Cancel</button>
+        <button class="ax-btn ax-btn-danger" id="confirm-ok">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Info / output / diff -->
+  <div id="info-modal" class="modal-backdrop" hidden>
+    <div class="ax-glass modal-card lg">
+      <h2 class="ax-h2" id="info-title">Output</h2>
+      <pre class="ax-code scroll" id="info-body"></pre>
+      <div class="ax-row" style="justify-content: flex-end; gap: 6px;">
+        <button class="ax-btn ax-btn-ghost" id="info-close">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reload-now prompt -->
+  <div id="reload-prompt" class="modal-backdrop" hidden>
+    <div class="ax-glass modal-card sm">
+      <h2 class="ax-h2">Reload apache2?</h2>
+      <p class="ax-text" id="reload-prompt-msg">Changes won't take effect until reload. Reload now?</p>
+      <div class="ax-row" style="justify-content: flex-end; gap: 6px;">
+        <button class="ax-btn ax-btn-ghost" id="reload-prompt-skip">Later</button>
+        <button class="ax-btn ax-btn-primary" id="reload-prompt-now">Reload now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue cert -->
+  <div id="cert-modal" class="modal-backdrop" hidden>
+    <div class="ax-glass modal-card">
+      <h2 class="ax-h2">Issue certificate</h2>
+      <label class="ax-label">Domains (space or comma separated)</label>
+      <input class="ax-input" id="cert-domains" placeholder="example.com www.example.com" autocomplete="off" spellcheck="false" />
+      <label class="ax-label">Email (for renewal notices)</label>
+      <input class="ax-input" id="cert-email" placeholder="you@example.com" autocomplete="off" spellcheck="false" />
+      <div class="ax-row" style="gap: 10px;">
+        <label class="ax-row" style="gap: 6px;"><input type="checkbox" id="cert-staging" /><span class="ax-text">Staging (test)</span></label>
+        <label class="ax-row" style="gap: 6px;"><input type="checkbox" id="cert-redirect" checked /><span class="ax-text">Redirect HTTP→HTTPS</span></label>
+      </div>
+      <div class="ax-row" style="justify-content: flex-end; gap: 6px;">
+        <button class="ax-btn ax-btn-ghost" id="cert-cancel">Cancel</button>
+        <button class="ax-btn ax-btn-primary" id="cert-issue">Issue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New site picker (template menu) -->
+  <div id="new-site-menu" class="modal-backdrop" hidden>
+    <div class="ax-glass modal-card sm">
+      <h2 class="ax-h2">New site</h2>
+      <p class="ax-text-muted">Pick a template:</p>
+      <div class="ax-stack" id="new-site-options" style="gap: 6px;"></div>
+      <div class="ax-row" style="justify-content: flex-end;">
+        <button class="ax-btn ax-btn-ghost" id="new-site-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+//
+// ============================================================
+// Apache2 Manager — single-file plugin
+// ============================================================
+//
+
+const ax = () => window.axion;
+const $  = (id) => document.getElementById(id);
+
+// ---------- Paths & constants ----------
+const SITES_AVAIL  = '/etc/apache2/sites-available';
+const SITES_EN     = '/etc/apache2/sites-enabled';
+const CONFS_AVAIL  = '/etc/apache2/conf-available';
+const CONFS_EN     = '/etc/apache2/conf-enabled';
+const MODS_AVAIL   = '/etc/apache2/mods-available';
+const MODS_EN      = '/etc/apache2/mods-enabled';
+const APACHE_CONF  = '/etc/apache2/apache2.conf';
+const PORTS_CONF   = '/etc/apache2/ports.conf';
+const APACHE_LOGS  = '/var/log/apache2';
+const LE_LIVE      = '/etc/letsencrypt/live';
+const SERVICE      = 'apache2';
+const NAME_RE      = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+
+// Default settings (overridden by axion.settings).
+let SETTINGS = {
+  logLines: 200,
+  liveIntervalMs: 2500,
+  backupCount: 10,
+  autoPollStatus: true,
+};
+
+// ---------- Templates ----------
+const TEMPLATES = {
+  static: {
+    label: 'Static site',
+    body:
+`<VirtualHost *:80>
+    ServerName example.com
+    # ServerAlias www.example.com
+
+    DocumentRoot /var/www/html
+
+    <Directory /var/www/html>
+        Options Indexes FollowSymLinks
+        AllowOverride None
+        Require all granted
+    </Directory>
+
+    ErrorLog \${APACHE_LOG_DIR}/example.com-error.log
+    CustomLog \${APACHE_LOG_DIR}/example.com-access.log combined
+</VirtualHost>
+`
+  },
+  proxy: {
+    label: 'Reverse proxy',
+    body:
+`# Requires: a2enmod proxy proxy_http
+<VirtualHost *:80>
+    ServerName example.com
+
+    ProxyPreserveHost On
+    ProxyRequests Off
+    ProxyPass        /  http://127.0.0.1:3000/
+    ProxyPassReverse /  http://127.0.0.1:3000/
+
+    ErrorLog \${APACHE_LOG_DIR}/example.com-error.log
+    CustomLog \${APACHE_LOG_DIR}/example.com-access.log combined
+</VirtualHost>
+`
+  },
+  phpfpm: {
+    label: 'PHP-FPM',
+    body:
+`# Requires: a2enmod proxy_fcgi setenvif ; a2enconf php8.x-fpm (or your PHP version)
+<VirtualHost *:80>
+    ServerName example.com
+    DocumentRoot /var/www/example.com
+
+    <Directory /var/www/example.com>
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    <FilesMatch \\.php$>
+        SetHandler "proxy:unix:/run/php/php-fpm.sock|fcgi://localhost"
+    </FilesMatch>
+
+    ErrorLog \${APACHE_LOG_DIR}/example.com-error.log
+    CustomLog \${APACHE_LOG_DIR}/example.com-access.log combined
+</VirtualHost>
+`
+  },
+  redirect: {
+    label: 'HTTP→HTTPS redirect',
+    body:
+`<VirtualHost *:80>
+    ServerName example.com
+    ServerAlias www.example.com
+
+    RewriteEngine On
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+    ErrorLog \${APACHE_LOG_DIR}/example.com-redirect-error.log
+    CustomLog \${APACHE_LOG_DIR}/example.com-redirect-access.log combined
+</VirtualHost>
+`
+  },
+  ssl: {
+    label: 'SSL with Let’s Encrypt',
+    body:
+`# Replace example.com once issued via certbot --apache.
+<VirtualHost *:80>
+    ServerName example.com
+    RewriteEngine On
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+</VirtualHost>
+
+<IfModule mod_ssl.c>
+<VirtualHost *:443>
+    ServerName example.com
+
+    DocumentRoot /var/www/html
+
+    <Directory /var/www/html>
+        Options Indexes FollowSymLinks
+        AllowOverride None
+        Require all granted
+    </Directory>
+
+    SSLEngine On
+    SSLCertificateFile      /etc/letsencrypt/live/example.com/fullchain.pem
+    SSLCertificateKeyFile   /etc/letsencrypt/live/example.com/privkey.pem
+    Include /etc/letsencrypt/options-ssl-apache.conf
+
+    ErrorLog \${APACHE_LOG_DIR}/example.com-error.log
+    CustomLog \${APACHE_LOG_DIR}/example.com-access.log combined
+</VirtualHost>
+</IfModule>
+`
+  },
+};
+
+const CONF_TEMPLATE =
+`# Custom apache2 configuration snippet.
+# This file is loaded site-wide when enabled via a2enconf.
+
+<IfModule mod_headers.c>
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-Content-Type-Options "nosniff"
+</IfModule>
+`;
+
+// ---------- Shell helpers ----------
+function shellQuote(s) {
+  return "'" + String(s).replace(/'/g, "'\\''") + "'";
+}
+function siteBase(name) { return name.replace(/\.conf$/, ''); }
+function ensureConfSuffix(name) { return /\.conf$/.test(name) ? name : (name + '.conf'); }
+
+async function exec(cmd) {
+  try { return await ax().exec(cmd); }
+  catch (e) {
+    return { stdout: '', stderr: String(e.message || e), exitCode: -1, _err: true };
+  }
+}
+async function sudo(cmd) {
+  return await ax().sudo(cmd);
+}
+async function sudoSafe(cmd) {
+  try { return await sudo(cmd); }
+  catch (e) {
+    if (e && e.code === 'E_SUDO_CANCELLED') return { _cancelled: true, exitCode: -1, stdout: '', stderr: '' };
+    return { stdout: '', stderr: String(e.message || e), exitCode: -1, _err: true };
+  }
+}
+
+// ---------- DOM helpers ----------
+function emptyEl(title, body, isError) {
+  const wrap = document.createElement('div');
+  wrap.className = 'ax-empty';
+  const t = document.createElement('div');
+  t.className = 'ax-empty-title' + (isError ? ' ax-text-error' : '');
+  t.textContent = title;
+  wrap.appendChild(t);
+  if (body) {
+    const b = document.createElement('div');
+    b.textContent = body;
+    wrap.appendChild(b);
+  }
+  return wrap;
+}
+function mkBtn(label, klass, onClick, title) {
+  const b = document.createElement('button');
+  b.className = 'ax-btn ' + klass;
+  b.textContent = label;
+  if (title) b.title = title;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+// ---------- Output panel ----------
+function setOutput(text, tone) {
+  const out = $('output');
+  if (!text) { out.hidden = true; out.textContent = ''; return; }
+  out.hidden = false;
+  out.textContent = text;
+  out.style.color =
+    tone === 'error'   ? 'var(--color-error)'   :
+    tone === 'success' ? 'var(--color-success)' : '';
+}
+
+// ---------- Modal helpers ----------
+let confirmResolve = null;
+function confirmDialog(title, message, opts) {
+  $('confirm-title').textContent = title;
+  $('confirm-message').textContent = message;
+  const okBtn = $('confirm-ok');
+  okBtn.className = 'ax-btn ' + ((opts && opts.danger === false) ? 'ax-btn-primary' : 'ax-btn-danger');
+  okBtn.textContent = (opts && opts.okLabel) || 'Confirm';
+  $('confirm-modal').hidden = false;
+  return new Promise((res) => { confirmResolve = res; });
+}
+function settleConfirm(value) {
+  $('confirm-modal').hidden = true;
+  if (confirmResolve) { const r = confirmResolve; confirmResolve = null; r(value); }
+}
+
+let infoCloseListener = null;
+function showInfo(title, body, opts) {
+  $('info-title').textContent = title;
+  const el = $('info-body');
+  el.innerHTML = '';
+  if (opts && opts.html) {
+    el.appendChild(opts.html);
+  } else {
+    el.textContent = String(body || '');
+  }
+  if (opts && opts.tone) {
+    el.style.color =
+      opts.tone === 'error'   ? 'var(--color-error)' :
+      opts.tone === 'success' ? 'var(--color-success)' : '';
+  } else {
+    el.style.color = '';
+  }
+  $('info-modal').hidden = false;
+}
+function hideInfo() { $('info-modal').hidden = true; }
+
+let reloadResolve = null;
+function askReloadNow(message) {
+  $('reload-prompt-msg').textContent = message || 'Changes won’t take effect until reload. Reload now?';
+  $('reload-prompt').hidden = false;
+  return new Promise((res) => { reloadResolve = res; });
+}
+function settleReload(value) {
+  $('reload-prompt').hidden = true;
+  if (reloadResolve) { const r = reloadResolve; reloadResolve = null; r(value); }
+}
+
+// ---------- Daemon: status + actions ----------
+let pollHandle = null;
+
+async function loadStatus() {
+  const pill = $('status');
+  if (!pill.classList.contains('ax-pill-success') && !pill.classList.contains('ax-pill-error')) {
+    pill.className = 'ax-pill';
+    pill.textContent = '…';
+  }
+  const r = await exec(`systemctl is-active ${SERVICE}`);
+  const v = (r.stdout || '').trim();
+  if (v === 'active') {
+    pill.className = 'ax-pill ax-pill-success';
+    pill.textContent = 'Active';
+  } else if (v === 'inactive') {
+    pill.className = 'ax-pill';
+    pill.textContent = 'Inactive';
+  } else if (v === 'failed') {
+    pill.className = 'ax-pill ax-pill-error';
+    pill.textContent = 'Failed';
+  } else {
+    pill.className = 'ax-pill ax-pill-warn';
+    pill.textContent = v || 'Unknown';
+  }
+}
+
+function startStatusPoll() {
+  stopStatusPoll();
+  if (!SETTINGS.autoPollStatus) return;
+  const ms = Math.max(2000, SETTINGS.liveIntervalMs * 4);
+  pollHandle = setInterval(loadStatus, ms);
+}
+function stopStatusPoll() {
+  if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+}
+
+async function testConfig(opts) {
+  const silent = opts && opts.silent;
+  if (!silent) setOutput('Testing…');
+  const r = await sudoSafe('apache2ctl configtest');
+  if (r._cancelled) { if (!silent) setOutput(''); return { ok: false, cancelled: true, output: '' }; }
+  const text = (r.stderr || r.stdout || '').trim();
+  if (r.exitCode === 0) {
+    if (!silent) {
+      setOutput(text || 'Syntax OK', 'success');
+      ax().ui.notify('Config OK', { tone: 'success' });
+    }
+    return { ok: true, output: text };
+  } else {
+    if (!silent) {
+      setOutput(text || 'Test failed (no output)', 'error');
+      ax().ui.notify('Config test failed', { tone: 'error' });
+    }
+    return { ok: false, output: text };
+  }
+}
+
+async function reloadDaemon() {
+  setOutput('Reloading…');
+  const r = await sudoSafe(`systemctl reload ${SERVICE}`);
+  if (r._cancelled) { setOutput(''); return; }
+  if (r.exitCode === 0) {
+    setOutput('Reloaded.', 'success');
+    ax().ui.notify('Reloaded apache2', { tone: 'success' });
+  } else {
+    setOutput((r.stderr || r.stdout || '').trim() || 'Reload failed', 'error');
+    ax().ui.notify('Reload failed', { tone: 'error' });
+  }
+  loadStatus();
+}
+
+async function restartDaemon() {
+  const ok = await confirmDialog(
+    'Restart apache2',
+    'Restart the apache2 service? Active connections will be interrupted briefly.'
+  );
+  if (!ok) return;
+  setOutput('Restarting…');
+  const r = await sudoSafe(`systemctl restart ${SERVICE}`);
+  if (r._cancelled) { setOutput(''); return; }
+  if (r.exitCode === 0) {
+    setOutput('Restarted.', 'success');
+    ax().ui.notify('Restarted apache2', { tone: 'success' });
+  } else {
+    setOutput((r.stderr || r.stdout || '').trim() || 'Restart failed', 'error');
+    ax().ui.notify('Restart failed', { tone: 'error' });
+  }
+  loadStatus();
+}
+
+// ---------- Tabs ----------
+const tabs = ['sites','configs','modules','logs','ssl','main','status'];
+function activateTab(id) {
+  for (const t of tabs) {
+    const btn = document.querySelector(`#tabs button[data-tab="${t}"]`);
+    const sec = document.querySelector(`section.panel[data-tab="${t}"]`);
+    if (btn) btn.classList.toggle('active', t === id);
+    if (sec) sec.hidden = t !== id;
+  }
+  if (id === 'configs')  loadConfigs();
+  if (id === 'modules')  loadModules();
+  if (id === 'logs')     populateLogSources();
+  if (id === 'ssl')      loadCerts();
+  if (id === 'main')     loadMain();
+  if (id === 'status')   loadStatusTab();
+  if (id !== 'logs')     stopLiveTail();
+}
+
+// ---------- Backups ----------
+async function backupPath() {
+  const home = await exec('echo "$HOME"');
+  const root = ((home.stdout || '/root').trim()) + '/.apache2-manager-backups';
+  return root;
+}
+async function backupFile(remotePath) {
+  if (SETTINGS.backupCount <= 0) return null;
+  const root = await backupPath();
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const safe = remotePath.replace(/\//g, '_');
+  const dest = `${root}/${safe}.${stamp}.bak`;
+  // Ensure parent exists; cp via sudo because src may be root-owned.
+  await exec(`mkdir -p ${shellQuote(root)}`);
+  const r = await sudoSafe(`cp -a ${shellQuote(remotePath)} ${shellQuote(dest)}`);
+  if (r._cancelled) return null;
+  if (r.exitCode === 0) {
+    await exec(`sudo chmod a+r ${shellQuote(dest)} 2>/dev/null; true`);
+    pruneBackups(root, safe).catch(() => {});
+    return dest;
+  }
+  return null;
+}
+async function pruneBackups(root, safe) {
+  const r = await exec(`ls -1t ${shellQuote(root)} | grep ${shellQuote('^' + safe.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.')} || true`);
+  const entries = (r.stdout || '').split('\n').map(s => s.trim()).filter(Boolean);
+  if (entries.length <= SETTINGS.backupCount) return;
+  const toDel = entries.slice(SETTINGS.backupCount).map(n => shellQuote(root + '/' + n)).join(' ');
+  if (toDel) await exec(`rm -f ${toDel}`);
+}
+
+// ---------- Auto-test save flow ----------
+//
+// Save a file at `targetPath` with `content`. Backs up the existing
+// file (if any), writes the new content via sftp+sudo mv, then runs
+// apache2ctl configtest. If the test fails, the previous content is
+// restored (or the file deleted if it didn't exist before). Returns
+// { ok, created, replaced, testOutput } or { ok: false, error }.
+//
+async function saveWithAutoTest(targetPath, content, opts) {
+  opts = opts || {};
+  const skipTest = !!opts.skipTest;
+  const exists = (await exec(`test -e ${shellQuote(targetPath)}`)).exitCode === 0;
+  const replaced = exists;
+  const created = !exists;
+
+  let backup = null;
+  if (exists) backup = await backupFile(targetPath);
+
+  // Write to a temp file first, then sudo mv into place.
+  const tmp = `/tmp/.apache2-mgr-${Date.now()}-${Math.random().toString(36).slice(2,8)}.conf`;
+  try {
+    await ax().sftp.write(tmp, new TextEncoder().encode(content));
+  } catch (e) {
+    return { ok: false, error: 'Could not write temp: ' + (e.message || e) };
+  }
+  const mv = await sudoSafe(`mv ${shellQuote(tmp)} ${shellQuote(targetPath)}`);
+  if (mv._cancelled) {
+    await exec(`rm -f ${shellQuote(tmp)}`);
+    return { ok: false, error: 'Cancelled.' };
+  }
+  if (mv.exitCode !== 0) {
+    await exec(`rm -f ${shellQuote(tmp)}`);
+    return { ok: false, error: (mv.stderr || mv.stdout || '').trim() || 'mv failed' };
+  }
+
+  if (skipTest) return { ok: true, created, replaced, testOutput: '', backup };
+
+  const test = await testConfig({ silent: true });
+  if (test.cancelled) return { ok: true, created, replaced, testOutput: '(test skipped)', backup };
+  if (!test.ok) {
+    // Roll back.
+    if (backup) {
+      await sudoSafe(`cp -a ${shellQuote(backup)} ${shellQuote(targetPath)}`);
+    } else {
+      await sudoSafe(`rm -f ${shellQuote(targetPath)}`);
+    }
+    return { ok: false, error: 'Config test failed — rolled back.', testOutput: test.output };
+  }
+  return { ok: true, created, replaced, testOutput: test.output, backup };
+}
+
+// ---------- Sites tab ----------
+let sitesAll = [];
+let enabledSites = new Set();
+
+async function loadSites() {
+  const sitesEl = $('sites');
+  sitesEl.innerHTML = '';
+  sitesEl.appendChild(emptyEl('Loading…'));
+  const [a, e] = await Promise.all([
+    exec(`ls -1 ${shellQuote(SITES_AVAIL)}`),
+    exec(`ls -1 ${shellQuote(SITES_EN)}`),
+  ]);
+  if (a._err || a.exitCode !== 0) {
+    sitesEl.innerHTML = '';
+    sitesEl.appendChild(emptyEl('Could not list sites', (a.stderr || '').trim(), true));
+    return;
+  }
+  sitesAll = (a.stdout || '').split('\n').map(s => s.trim()).filter(Boolean).sort();
+  enabledSites = new Set((e.stdout || '').split('\n').map(s => s.trim()).filter(Boolean));
+  renderSites();
+}
+function renderSites() {
+  const sitesEl = $('sites');
+  const filter = ($('sites-filter').value || '').toLowerCase().trim();
+  const filtered = filter ? sitesAll.filter(n => n.toLowerCase().includes(filter)) : sitesAll;
+  sitesEl.innerHTML = '';
+  if (!filtered.length) {
+    sitesEl.appendChild(emptyEl(filter ? 'No matches' : 'No sites yet', filter ? `Nothing matches "${filter}".` : 'Click New site to create one.'));
+    return;
+  }
+  for (const name of filtered) sitesEl.appendChild(renderSiteRow(name, enabledSites.has(name)));
+}
+function renderSiteRow(name, isEnabled) {
+  const row = document.createElement('div');
+  row.className = 'row';
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'name ax-text';
+  nameEl.textContent = name;
+  nameEl.title = name;
+
+  const pill = document.createElement('span');
+  pill.className = isEnabled ? 'ax-pill ax-pill-success' : 'ax-pill';
+  pill.textContent = isEnabled ? 'enabled' : 'disabled';
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  actions.appendChild(mkBtn('Edit', 'ax-btn-ghost ax-btn-sm', () => openEditSite(name)));
+  actions.appendChild(mkBtn('Test', 'ax-btn-ghost ax-btn-sm', () => testSite(name, isEnabled), 'Test just this site'));
+  actions.appendChild(mkBtn(isEnabled ? 'Disable' : 'Enable', 'ax-btn-outline ax-btn-sm', () => toggleSite(name, isEnabled)));
+  actions.appendChild(mkBtn('Dup', 'ax-btn-ghost ax-btn-sm', () => duplicateSite(name), 'Duplicate'));
+  actions.appendChild(mkBtn('Del', 'ax-btn-ghost ax-btn-sm', () => deleteSite(name, isEnabled)));
+
+  row.append(nameEl, pill, actions);
+  return row;
+}
+
+// Edit modal state
+let editCtx = null; // { kind: 'site'|'conf'|'main', path, name, original }
+
+async function openEditSite(name) {
+  await openEditFile({
+    kind: 'site',
+    title: name ? ('Edit site: ' + name) : 'New site',
+    name,
+    nameEditable: !name,
+    nameSuffix: '.conf',
+    namePlaceholder: 'example.com.conf',
+    dir: SITES_AVAIL,
+    template: TEMPLATES.static.body,
+    showTemplates: !name,
+    showTest: !!name,
+  });
+}
+
+async function openEditConf(name) {
+  await openEditFile({
+    kind: 'conf',
+    title: name ? ('Edit conf: ' + name) : 'New conf',
+    name,
+    nameEditable: !name,
+    nameSuffix: '.conf',
+    namePlaceholder: 'security.conf',
+    dir: CONFS_AVAIL,
+    template: CONF_TEMPLATE,
+    showTemplates: false,
+    showTest: false,
+  });
+}
+
+async function openEditFile(opts) {
+  editCtx = {
+    kind: opts.kind,
+    name: opts.name || null,
+    dir: opts.dir,
+    nameSuffix: opts.nameSuffix || '',
+    path: opts.name ? (opts.dir + '/' + opts.name) : null,
+    original: '',
+  };
+  $('edit-title').textContent = opts.title;
+  $('edit-path').textContent = editCtx.path || '';
+  const nameEl = $('edit-name');
+  nameEl.value = opts.name || '';
+  nameEl.disabled = !opts.nameEditable;
+  nameEl.placeholder = opts.namePlaceholder || '';
+  $('edit-content').value = opts.name ? 'Loading…' : (opts.template || '');
+
+  // Templates dropdown (sites only).
+  const tmplRow = $('edit-template-row');
+  const tmplSel = $('edit-template');
+  if (opts.showTemplates) {
+    tmplSel.innerHTML = '';
+    for (const k of Object.keys(TEMPLATES)) {
+      const o = document.createElement('option');
+      o.value = k; o.textContent = TEMPLATES[k].label;
+      tmplSel.appendChild(o);
+    }
+    tmplRow.hidden = false;
+    tmplSel.onchange = () => { $('edit-content').value = TEMPLATES[tmplSel.value].body; };
+  } else {
+    tmplRow.hidden = true;
+  }
+
+  $('edit-diff').hidden = !opts.name;
+  $('edit-test').hidden = !opts.showTest;
+  $('edit-modal').hidden = false;
+  setTimeout(() => (opts.name ? $('edit-content') : $('edit-name')).focus(), 0);
+
+  if (opts.name) {
+    const r = await exec(`cat ${shellQuote(editCtx.path)}`);
+    if (r.exitCode === 0) {
+      editCtx.original = r.stdout || '';
+      $('edit-content').value = editCtx.original;
+    } else {
+      $('edit-content').value = '# Could not read: ' + (r.stderr || '').trim();
+    }
+  }
+}
+
+function closeEdit() {
+  $('edit-modal').hidden = true;
+  editCtx = null;
+}
+
+async function saveEdit() {
+  if (!editCtx) return;
+  let name = ($('edit-name').value || '').trim();
+  if (!NAME_RE.test(name)) {
+    ax().ui.notify('Invalid name. Use letters, digits, dot, underscore, dash.', { tone: 'error' });
+    $('edit-name').focus();
+    return;
+  }
+  if (editCtx.nameSuffix && !name.endsWith(editCtx.nameSuffix)) name += editCtx.nameSuffix;
+  const kind = editCtx.kind;
+  const targetPath = editCtx.dir + '/' + name;
+  const wasNew = !editCtx.name;
+  const content = $('edit-content').value;
+
+  setOutput('Saving…');
+  const res = await saveWithAutoTest(targetPath, content);
+  if (!res.ok) {
+    setOutput((res.testOutput ? res.testOutput + '\n\n' : '') + (res.error || 'Save failed.'), 'error');
+    ax().ui.notify(res.error || 'Save failed', { tone: 'error' });
+    return;
+  }
+  setOutput(res.testOutput || (wasNew ? `Created ${name}` : `Updated ${name}`), 'success');
+  ax().ui.notify(wasNew ? `Created ${name}` : `Updated ${name}`, { tone: 'success' });
+  closeEdit();
+  if (kind === 'conf') loadConfigs(); else loadSites();
+
+  // Offer reload if the target dir's "enabled" twin contains this name.
+  const enabledDir = (kind === 'conf') ? CONFS_EN : SITES_EN;
+  const isEnabled = (await exec(`test -e ${shellQuote(enabledDir + '/' + name)}`)).exitCode === 0;
+  if (isEnabled || !wasNew) {
+    if (await askReloadNow()) await reloadDaemon();
+  }
+}
+
+async function showEditDiff() {
+  if (!editCtx || !editCtx.path) return;
+  const tmp = `/tmp/.apache2-mgr-diff-${Date.now()}.txt`;
+  try {
+    await ax().sftp.write(tmp, new TextEncoder().encode($('edit-content').value));
+  } catch (e) {
+    ax().ui.notify('diff failed: ' + (e.message || e), { tone: 'error' });
+    return;
+  }
+  const r = await exec(`diff -u ${shellQuote(editCtx.path)} ${shellQuote(tmp)}`);
+  await exec(`rm -f ${shellQuote(tmp)}`);
+  const out = r.stdout || (r.exitCode === 0 ? '(no changes)' : (r.stderr || ''));
+
+  const pre = document.createElement('div');
+  pre.style.fontFamily = 'var(--font-mono)';
+  pre.style.fontSize = '12px';
+  pre.style.whiteSpace = 'pre';
+  for (const line of out.split('\n')) {
+    const ln = document.createElement('div');
+    if (line.startsWith('+++') || line.startsWith('---')) ln.className = 'ax-text-muted';
+    else if (line.startsWith('@@')) ln.className = 'diff-hunk';
+    else if (line.startsWith('+'))  ln.className = 'diff-add';
+    else if (line.startsWith('-'))  ln.className = 'diff-del';
+    ln.textContent = line;
+    pre.appendChild(ln);
+  }
+  showInfo('Diff vs on-disk', '', { html: pre });
+}
+
+async function testEditSite() {
+  if (!editCtx || !editCtx.name || editCtx.kind !== 'site') return;
+  // Save current textarea to a tmp file in sites-available with a
+  // throwaway name, temp-enable, configtest, then clean up.
+  const stamp = Date.now();
+  const tmpName = `__apache2_mgr_test_${stamp}.conf`;
+  const tmpAvail = SITES_AVAIL + '/' + tmpName;
+  const tmpHost  = `/tmp/.apache2-mgr-test-${stamp}.conf`;
+  setOutput('Testing site…');
+  try {
+    await ax().sftp.write(tmpHost, new TextEncoder().encode($('edit-content').value));
+  } catch (e) {
+    setOutput('write failed: ' + (e.message || e), 'error'); return;
+  }
+  const mv = await sudoSafe(`mv ${shellQuote(tmpHost)} ${shellQuote(tmpAvail)}`);
+  if (mv._cancelled || mv.exitCode !== 0) {
+    setOutput('Could not stage temp site: ' + ((mv.stderr || '').trim() || 'cancelled'), 'error');
+    await exec(`rm -f ${shellQuote(tmpHost)}`);
+    return;
+  }
+  await sudoSafe(`a2ensite ${shellQuote(siteBase(tmpName))}`);
+  const t = await sudoSafe('apache2ctl configtest');
+  await sudoSafe(`a2dissite ${shellQuote(siteBase(tmpName))}`);
+  await sudoSafe(`rm -f ${shellQuote(tmpAvail)}`);
+  const text = (t.stderr || t.stdout || '').trim();
+  if (t.exitCode === 0) {
+    setOutput(text || 'Site OK', 'success');
+    ax().ui.notify('Site OK', { tone: 'success' });
+  } else {
+    setOutput(text || 'Site test failed', 'error');
+    ax().ui.notify('Site test failed', { tone: 'error' });
+  }
+}
+
+async function toggleSite(name, isEnabled) {
+  const base = siteBase(name);
+  const r = await sudoSafe(isEnabled ? `a2dissite ${shellQuote(base)}` : `a2ensite ${shellQuote(base)}`);
+  if (r._cancelled) return;
+  if (r.exitCode !== 0) {
+    ax().ui.notify('Action failed: ' + ((r.stderr||r.stdout||'').trim() || 'unknown'), { tone: 'error' });
+    return;
+  }
+  ax().ui.notify(`${name} ${isEnabled ? 'disabled' : 'enabled'}`, { tone: isEnabled ? 'info' : 'success' });
+  await loadSites();
+  if (await askReloadNow()) await reloadDaemon();
+}
+
+async function duplicateSite(name) {
+  const newName = await promptName('Duplicate site', 'New name:', name.replace(/\.conf$/, '') + '-copy');
+  if (!newName) return;
+  let n = newName.trim();
+  if (!NAME_RE.test(n)) { ax().ui.notify('Invalid name', { tone: 'error' }); return; }
+  if (!n.endsWith('.conf')) n += '.conf';
+  const target = SITES_AVAIL + '/' + n;
+  const exists = (await exec(`test -e ${shellQuote(target)}`)).exitCode === 0;
+  if (exists) { ax().ui.notify('Already exists', { tone: 'error' }); return; }
+  const r = await sudoSafe(`cp -a ${shellQuote(SITES_AVAIL + '/' + name)} ${shellQuote(target)}`);
+  if (r._cancelled) return;
+  if (r.exitCode !== 0) { ax().ui.notify('Copy failed', { tone: 'error' }); return; }
+  ax().ui.notify(`Created ${n}`, { tone: 'success' });
+  await loadSites();
+}
+
+async function deleteSite(name, isEnabled) {
+  const ok = await confirmDialog(
+    'Delete site',
+    `Delete "${name}"?` + (isEnabled ? ' It is currently enabled — it will be disabled first.' : '')
+  );
+  if (!ok) return;
+  await backupFile(SITES_AVAIL + '/' + name);
+  if (isEnabled) await sudoSafe(`a2dissite ${shellQuote(siteBase(name))}`);
+  const r = await sudoSafe(`rm -f ${shellQuote(SITES_AVAIL + '/' + name)}`);
+  if (r._cancelled) return;
+  if (r.exitCode !== 0) { ax().ui.notify('Delete failed', { tone: 'error' }); return; }
+  ax().ui.notify(`${name} deleted`, { tone: 'success' });
+  await loadSites();
+  if (isEnabled && (await askReloadNow())) await reloadDaemon();
+}
+
+// ---------- Per-site test from list ----------
+async function testSite(name, isEnabled) {
+  setOutput('Testing site…');
+  if (isEnabled) {
+    const t = await sudoSafe('apache2ctl configtest');
+    const text = (t.stderr || t.stdout || '').trim();
+    setOutput(text || (t.exitCode === 0 ? 'OK' : 'Failed'), t.exitCode === 0 ? 'success' : 'error');
+    return;
+  }
+  // Temporarily enable and test.
+  const r1 = await sudoSafe(`a2ensite ${shellQuote(siteBase(name))}`);
+  if (r1._cancelled) { setOutput(''); return; }
+  const t = await sudoSafe('apache2ctl configtest');
+  await sudoSafe(`a2dissite ${shellQuote(siteBase(name))}`);
+  const text = (t.stderr || t.stdout || '').trim();
+  setOutput(text || (t.exitCode === 0 ? 'OK' : 'Failed'), t.exitCode === 0 ? 'success' : 'error');
+}
+
+// Tiny inline name prompt using the confirm modal isn't great; use a
+// quick custom dialog reusing the edit modal would conflict, so we
+// inline a minimal one.
+function promptName(title, label, initial) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop';
+    wrap.innerHTML =
+      `<div class="ax-glass modal-card sm">
+        <h2 class="ax-h2">${title}</h2>
+        <label class="ax-label">${label}</label>
+        <input class="ax-input" />
+        <div class="ax-row" style="justify-content: flex-end; gap: 6px;">
+          <button class="ax-btn ax-btn-ghost" data-act="cancel">Cancel</button>
+          <button class="ax-btn ax-btn-primary" data-act="ok">OK</button>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    const inp = wrap.querySelector('input');
+    inp.value = initial || '';
+    setTimeout(() => { inp.focus(); inp.select(); }, 0);
+    function close(val) { wrap.remove(); resolve(val); }
+    wrap.querySelector('[data-act="cancel"]').addEventListener('click', () => close(null));
+    wrap.querySelector('[data-act="ok"]').addEventListener('click', () => close(inp.value));
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') close(inp.value);
+      if (e.key === 'Escape') close(null);
+    });
+    wrap.addEventListener('click', (e) => { if (e.target === wrap) close(null); });
+  });
+}
+
+// New-site menu (template picker)
+function openNewSiteMenu() {
+  const opts = $('new-site-options');
+  opts.innerHTML = '';
+  const blank = mkBtn('Blank', 'ax-btn-outline', () => { closeNewSiteMenu(); openEditSite(null); });
+  opts.appendChild(blank);
+  for (const k of Object.keys(TEMPLATES)) {
+    const t = TEMPLATES[k];
+    opts.appendChild(mkBtn(t.label, 'ax-btn-ghost', () => {
+      closeNewSiteMenu();
+      openEditSite(null).then(() => {
+        $('edit-content').value = t.body;
+        const sel = $('edit-template');
+        if (sel && sel.options) {
+          for (let i = 0; i < sel.options.length; i++) if (sel.options[i].value === k) sel.selectedIndex = i;
+        }
+      });
+    }));
+  }
+  $('new-site-menu').hidden = false;
+}
+function closeNewSiteMenu() { $('new-site-menu').hidden = true; }
+
+// ---------- Configs tab (conf-available / conf-enabled) ----------
+let confsAll = [];
+let enabledConfs = new Set();
+
+async function loadConfigs() {
+  const el = $('configs');
+  el.innerHTML = '';
+  el.appendChild(emptyEl('Loading…'));
+  const [a, e] = await Promise.all([
+    exec(`ls -1 ${shellQuote(CONFS_AVAIL)}`),
+    exec(`ls -1 ${shellQuote(CONFS_EN)}`),
+  ]);
+  if (a._err || a.exitCode !== 0) {
+    el.innerHTML = '';
+    el.appendChild(emptyEl('Could not list confs', (a.stderr || '').trim(), true));
+    return;
+  }
+  confsAll = (a.stdout || '').split('\n').map(s => s.trim()).filter(Boolean).sort();
+  enabledConfs = new Set((e.stdout || '').split('\n').map(s => s.trim()).filter(Boolean));
+  renderConfigs();
+}
+function renderConfigs() {
+  const el = $('configs');
+  const filter = ($('configs-filter').value || '').toLowerCase().trim();
+  const filtered = filter ? confsAll.filter(n => n.toLowerCase().includes(filter)) : confsAll;
+  el.innerHTML = '';
+  if (!filtered.length) {
+    el.appendChild(emptyEl(filter ? 'No matches' : 'No confs', filter ? null : 'Click New conf to create one.'));
+    return;
+  }
+  for (const name of filtered) el.appendChild(renderConfRow(name, enabledConfs.has(name)));
+}
+function renderConfRow(name, isEnabled) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const nameEl = document.createElement('span');
+  nameEl.className = 'name ax-text';
+  nameEl.textContent = name; nameEl.title = name;
+  const pill = document.createElement('span');
+  pill.className = isEnabled ? 'ax-pill ax-pill-success' : 'ax-pill';
+  pill.textContent = isEnabled ? 'enabled' : 'disabled';
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  actions.appendChild(mkBtn('Edit', 'ax-btn-ghost ax-btn-sm', () => openEditConf(name)));
+  actions.appendChild(mkBtn(isEnabled ? 'Disable' : 'Enable', 'ax-btn-outline ax-btn-sm', async () => {
+    const base = name.replace(/\.conf$/, '');
+    const r = await sudoSafe(isEnabled ? `a2disconf ${shellQuote(base)}` : `a2enconf ${shellQuote(base)}`);
+    if (r._cancelled) return;
+    if (r.exitCode !== 0) { ax().ui.notify('Action failed', { tone: 'error' }); return; }
+    ax().ui.notify(`${name} ${isEnabled ? 'disabled' : 'enabled'}`, { tone: isEnabled ? 'info' : 'success' });
+    await loadConfigs();
+    if (await askReloadNow()) await reloadDaemon();
+  }));
+  actions.appendChild(mkBtn('Del', 'ax-btn-ghost ax-btn-sm', async () => {
+    const ok = await confirmDialog('Delete conf', `Delete "${name}"?` + (isEnabled ? ' It will be disabled first.' : ''));
+    if (!ok) return;
+    await backupFile(CONFS_AVAIL + '/' + name);
+    if (isEnabled) await sudoSafe(`a2disconf ${shellQuote(name.replace(/\.conf$/, ''))}`);
+    const r = await sudoSafe(`rm -f ${shellQuote(CONFS_AVAIL + '/' + name)}`);
+    if (r._cancelled) return;
+    if (r.exitCode !== 0) { ax().ui.notify('Delete failed', { tone: 'error' }); return; }
+    ax().ui.notify(`${name} deleted`, { tone: 'success' });
+    await loadConfigs();
+    if (isEnabled && (await askReloadNow())) await reloadDaemon();
+  }));
+  row.append(nameEl, pill, actions);
+  return row;
+}
+
+// ---------- Modules tab ----------
+async function loadModules() {
+  const el = $('modules');
+  el.innerHTML = '';
+  el.appendChild(emptyEl('Loading…'));
+  const [a, e] = await Promise.all([
+    exec(`ls -1 ${shellQuote(MODS_AVAIL)} | grep '\\.load$' || true`),
+    exec(`ls -1 ${shellQuote(MODS_EN)} | grep '\\.load$' || true`),
+  ]);
+  const avail = (a.stdout || '').split('\n').map(s => s.trim()).filter(Boolean).map(n => n.replace(/\.load$/, '')).sort();
+  const enabled = new Set((e.stdout || '').split('\n').map(s => s.trim()).filter(Boolean).map(n => n.replace(/\.load$/, '')));
+  el.innerHTML = '';
+  if (!avail.length) { el.appendChild(emptyEl('No modules found')); return; }
+  modulesAll = avail;
+  modulesEnabled = enabled;
+  renderModules();
+}
+let modulesAll = [];
+let modulesEnabled = new Set();
+
+function renderModules() {
+  const el = $('modules');
+  const filter = ($('modules-filter').value || '').toLowerCase().trim();
+  const filtered = filter ? modulesAll.filter(n => n.toLowerCase().includes(filter)) : modulesAll;
+  el.innerHTML = '';
+  if (!filtered.length) { el.appendChild(emptyEl('No matches')); return; }
+  for (const m of filtered) el.appendChild(renderModuleRow(m, modulesEnabled.has(m)));
+}
+function renderModuleRow(name, isEnabled) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const nameEl = document.createElement('span');
+  nameEl.className = 'name ax-text';
+  nameEl.textContent = name; nameEl.title = name;
+  const pill = document.createElement('span');
+  pill.className = isEnabled ? 'ax-pill ax-pill-success' : 'ax-pill';
+  pill.textContent = isEnabled ? 'enabled' : 'disabled';
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  actions.appendChild(mkBtn('View', 'ax-btn-ghost ax-btn-sm', async () => {
+    const r = await exec(`cat ${shellQuote(MODS_AVAIL + '/' + name + '.load')} 2>/dev/null; echo '---'; cat ${shellQuote(MODS_AVAIL + '/' + name + '.conf')} 2>/dev/null || true`);
+    showInfo(name, r.stdout || '(no content)');
+  }));
+  actions.appendChild(mkBtn(isEnabled ? 'Disable' : 'Enable', 'ax-btn-outline ax-btn-sm', async () => {
+    const r = await sudoSafe(isEnabled ? `a2dismod ${shellQuote(name)}` : `a2enmod ${shellQuote(name)}`);
+    if (r._cancelled) return;
+    if (r.exitCode !== 0) {
+      const text = (r.stderr || r.stdout || '').trim();
+      ax().ui.notify('Action failed', { tone: 'error' });
+      showInfo('a2en/dismod output', text || 'unknown error', { tone: 'error' });
+      return;
+    }
+    ax().ui.notify(`${name} ${isEnabled ? 'disabled' : 'enabled'}`, { tone: isEnabled ? 'info' : 'success' });
+    await loadModules();
+    // Module changes typically need restart, not reload.
+    if (await askReloadNow('Module changes need a restart to take full effect. Restart now?')) {
+      const r2 = await sudoSafe(`systemctl restart ${SERVICE}`);
+      if (!r2._cancelled && r2.exitCode === 0) ax().ui.notify('Restarted', { tone: 'success' });
+      else ax().ui.notify('Restart failed', { tone: 'error' });
+      loadStatus();
+    }
+  }));
+  row.append(nameEl, pill, actions);
+  return row;
+}
+
+// ---------- Logs tab ----------
+let liveTimer = null;
+let lastLogPath = null;
+
+async function populateLogSources() {
+  const sel = $('log-source');
+  sel.innerHTML = '<option value="">Loading…</option>';
+  const sources = [];
+
+  // Global access/error logs (and other_vhosts_access if present).
+  const globals = ['access.log', 'error.log', 'other_vhosts_access.log'];
+  for (const g of globals) {
+    const ok = (await exec(`test -e ${shellQuote(APACHE_LOGS + '/' + g)}`)).exitCode === 0;
+    if (ok) sources.push({ label: `[global] ${g}`, path: APACHE_LOGS + '/' + g });
+  }
+
+  // Per-site logs: parse ErrorLog/CustomLog from each enabled vhost.
+  const list = await exec(`ls -1 ${shellQuote(SITES_EN)}`);
+  const enabled = (list.stdout || '').split('\n').map(s => s.trim()).filter(Boolean);
+  for (const site of enabled) {
+    const r = await exec(`cat ${shellQuote(SITES_AVAIL + '/' + site)}`);
+    const content = r.stdout || '';
+    const seen = new Set();
+    const lineRe = /^\s*(?:ErrorLog|CustomLog|TransferLog)\s+("([^"]+)"|(\S+))/gmi;
+    let m;
+    while ((m = lineRe.exec(content)) !== null) {
+      let path = (m[2] || m[3] || '').trim();
+      if (!path || path.startsWith('|')) continue;          // piped logs
+      path = path.replace(/\$\{APACHE_LOG_DIR\}/g, APACHE_LOGS);
+      if (!path.startsWith('/')) path = APACHE_LOGS + '/' + path;
+      if (seen.has(path)) continue;
+      seen.add(path);
+      sources.push({ label: `[${site}] ${path}`, path });
+    }
+  }
+
+  sel.innerHTML = '';
+  if (!sources.length) {
+    const o = document.createElement('option');
+    o.value = ''; o.textContent = '(no logs found)';
+    sel.appendChild(o);
+    return;
+  }
+  for (const s of sources) {
+    const o = document.createElement('option');
+    o.value = s.path; o.textContent = s.label;
+    sel.appendChild(o);
+  }
+  if (lastLogPath && sources.some(s => s.path === lastLogPath)) sel.value = lastLogPath;
+  refreshLog();
+}
+
+async function refreshLog() {
+  const path = $('log-source').value;
+  if (!path) { $('log-output').textContent = '(no log selected)'; return; }
+  lastLogPath = path;
+  const lines = parseInt($('log-lines').value, 10) || SETTINGS.logLines;
+  const grep = ($('log-grep').value || '').trim();
+  let cmd = `tail -n ${lines} ${shellQuote(path)}`;
+  if (grep) cmd += ` | grep -E ${shellQuote(grep)} || true`;
+  // Apache logs are usually root-readable for error.log; access.log is often root or adm group.
+  const r = await sudoSafe(cmd);
+  if (r._cancelled) return;
+  const out = r.stdout || '';
+  $('log-output').textContent = out || (r.stderr || '').trim() || '(empty)';
+  // Auto-scroll to bottom.
+  const el = $('log-output');
+  el.scrollTop = el.scrollHeight;
+}
+
+function startLiveTail() {
+  stopLiveTail();
+  $('log-live').textContent = 'Stop';
+  $('log-live').classList.add('ax-btn-danger');
+  $('log-live').classList.remove('ax-btn-outline');
+  liveTimer = setInterval(refreshLog, Math.max(500, SETTINGS.liveIntervalMs));
+}
+function stopLiveTail() {
+  if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+  const b = $('log-live');
+  if (b) {
+    b.textContent = 'Live';
+    b.classList.add('ax-btn-outline');
+    b.classList.remove('ax-btn-danger');
+  }
+}
+
+// ---------- SSL tab ----------
+async function loadCerts() {
+  const el = $('ssl');
+  el.innerHTML = '';
+  el.appendChild(emptyEl('Loading…'));
+  // /etc/letsencrypt/live is typically 0700 root — list via sudo.
+  const r = await sudoSafe(`ls -1 ${shellQuote(LE_LIVE)} 2>/dev/null || true`);
+  if (r._cancelled) { el.innerHTML = ''; el.appendChild(emptyEl('Cancelled')); return; }
+  const dirs = (r.stdout || '').split('\n').map(s => s.trim()).filter(Boolean).filter(n => n !== 'README');
+  el.innerHTML = '';
+  $('ssl-summary').textContent = `${dirs.length} certificate(s)`;
+  if (!dirs.length) {
+    el.appendChild(emptyEl('No certificates', `${LE_LIVE} is empty or absent. Click Issue cert to create one.`));
+    return;
+  }
+  for (const d of dirs) {
+    const certPath = `${LE_LIVE}/${d}/fullchain.pem`;
+    const info = await sudoSafe(`openssl x509 -in ${shellQuote(certPath)} -noout -subject -enddate -ext subjectAltName 2>/dev/null || true`);
+    const text = info.stdout || '';
+    const enddate = (text.match(/notAfter=(.*)/) || [])[1] || '';
+    const sans = ((text.match(/DNS:[^\n,]+/g) || []).map(s => s.replace('DNS:', '').trim()));
+    const expiryDate = enddate ? new Date(enddate) : null;
+    const days = expiryDate ? Math.floor((expiryDate.getTime() - Date.now()) / 86400000) : null;
+
+    const row = document.createElement('div');
+    row.className = 'row';
+    const name = document.createElement('div');
+    name.className = 'name';
+    const t = document.createElement('div');
+    t.className = 'ax-text';
+    t.textContent = d;
+    const sub = document.createElement('div');
+    sub.className = 'ax-text-muted';
+    sub.style.fontSize = '11px';
+    sub.textContent = sans.length ? ('SAN: ' + sans.join(', ')) : '';
+    name.append(t, sub);
+
+    const pill = document.createElement('span');
+    if (days === null) { pill.className = 'ax-pill'; pill.textContent = 'unknown'; }
+    else if (days < 0)   { pill.className = 'ax-pill ax-pill-error';   pill.textContent = `expired ${Math.abs(days)}d`; }
+    else if (days < 14)  { pill.className = 'ax-pill ax-pill-warn';    pill.textContent = `${days}d left`; }
+    else                 { pill.className = 'ax-pill ax-pill-success'; pill.textContent = `${days}d left`; }
+    pill.title = enddate || '';
+
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    actions.appendChild(mkBtn('Renew', 'ax-btn-outline ax-btn-sm', () => renewCert(d)));
+    actions.appendChild(mkBtn('Details', 'ax-btn-ghost ax-btn-sm', async () => {
+      const full = await sudoSafe(`openssl x509 -in ${shellQuote(certPath)} -noout -text`);
+      showInfo(d, full.stdout || (full.stderr || '').trim());
+    }));
+    row.append(name, pill, actions);
+    el.appendChild(row);
+  }
+}
+
+async function renewCert(domain) {
+  const ok = await confirmDialog('Renew certificate', `Run "certbot renew --cert-name ${domain}"?`, { okLabel: 'Renew', danger: false });
+  if (!ok) return;
+  setOutput('Renewing ' + domain + '…');
+  const r = await sudoSafe(`certbot renew --cert-name ${shellQuote(domain)} --non-interactive`);
+  if (r._cancelled) { setOutput(''); return; }
+  const text = (r.stdout + '\n' + r.stderr).trim();
+  showInfo('certbot renew', text, { tone: r.exitCode === 0 ? 'success' : 'error' });
+  setOutput(r.exitCode === 0 ? 'Renewed.' : 'Renew failed.', r.exitCode === 0 ? 'success' : 'error');
+  loadCerts();
+}
+
+async function renewAll() {
+  const ok = await confirmDialog('Renew all', 'Run "certbot renew" for every certificate?', { okLabel: 'Renew', danger: false });
+  if (!ok) return;
+  setOutput('Renewing all…');
+  const r = await sudoSafe(`certbot renew --non-interactive`);
+  if (r._cancelled) { setOutput(''); return; }
+  const text = (r.stdout + '\n' + r.stderr).trim();
+  showInfo('certbot renew', text, { tone: r.exitCode === 0 ? 'success' : 'error' });
+  setOutput(r.exitCode === 0 ? 'Renewed.' : 'Renew failed.', r.exitCode === 0 ? 'success' : 'error');
+  loadCerts();
+}
+
+function openIssueModal() { $('cert-modal').hidden = false; setTimeout(() => $('cert-domains').focus(), 0); }
+function closeIssueModal() { $('cert-modal').hidden = true; }
+
+async function issueCert() {
+  const raw = ($('cert-domains').value || '').trim();
+  const email = ($('cert-email').value || '').trim();
+  const staging = $('cert-staging').checked;
+  const redirect = $('cert-redirect').checked;
+  const domains = raw.split(/[\s,]+/).filter(Boolean);
+  if (!domains.length) { ax().ui.notify('Need at least one domain', { tone: 'error' }); return; }
+  if (!/^[^@\s]+@[^@\s]+$/.test(email)) { ax().ui.notify('Need a valid email', { tone: 'error' }); return; }
+  const args = [
+    '--apache',
+    '--non-interactive',
+    '--agree-tos',
+    '-m', shellQuote(email),
+    redirect ? '--redirect' : '--no-redirect',
+    staging ? '--staging' : '',
+  ].filter(Boolean);
+  for (const d of domains) { args.push('-d'); args.push(shellQuote(d)); }
+  const cmd = 'certbot ' + args.join(' ');
+  closeIssueModal();
+  setOutput('Issuing…');
+  const r = await sudoSafe(cmd);
+  if (r._cancelled) { setOutput(''); return; }
+  const text = (r.stdout + '\n' + r.stderr).trim();
+  showInfo('certbot --apache', text, { tone: r.exitCode === 0 ? 'success' : 'error' });
+  setOutput(r.exitCode === 0 ? 'Issued.' : 'Issue failed.', r.exitCode === 0 ? 'success' : 'error');
+  loadCerts();
+  loadSites();
+}
+
+// ---------- Main config tab ----------
+let mainOriginal = '';
+async function loadMain() {
+  const path = $('main-file').value;
+  $('main-content').value = 'Loading…';
+  const r = await exec(`cat ${shellQuote(path)}`);
+  if (r.exitCode !== 0) {
+    $('main-content').value = '# Could not read: ' + ((r.stderr || '').trim() || 'unknown');
+    mainOriginal = '';
+    return;
+  }
+  mainOriginal = r.stdout || '';
+  $('main-content').value = mainOriginal;
+}
+
+async function saveMain() {
+  const path = $('main-file').value;
+  if (!path) return;
+  const ok = await confirmDialog('Save main config', `Overwrite ${path}? It will be auto-tested and rolled back on failure.`, { okLabel: 'Save', danger: false });
+  if (!ok) return;
+  setOutput('Saving…');
+  const res = await saveWithAutoTest(path, $('main-content').value);
+  if (!res.ok) {
+    setOutput((res.testOutput ? res.testOutput + '\n\n' : '') + (res.error || 'Save failed.'), 'error');
+    ax().ui.notify(res.error || 'Save failed', { tone: 'error' });
+    return;
+  }
+  setOutput(res.testOutput || 'Saved.', 'success');
+  ax().ui.notify('Saved ' + path.split('/').pop(), { tone: 'success' });
+  mainOriginal = $('main-content').value;
+  if (await askReloadNow()) await reloadDaemon();
+}
+
+async function diffMain() {
+  const path = $('main-file').value;
+  const tmp = `/tmp/.apache2-mgr-diff-main-${Date.now()}.txt`;
+  try { await ax().sftp.write(tmp, new TextEncoder().encode($('main-content').value)); }
+  catch (e) { ax().ui.notify('diff failed: ' + (e.message || e), { tone: 'error' }); return; }
+  const r = await exec(`diff -u ${shellQuote(path)} ${shellQuote(tmp)}`);
+  await exec(`rm -f ${shellQuote(tmp)}`);
+  const out = r.stdout || (r.exitCode === 0 ? '(no changes)' : (r.stderr || ''));
+  const pre = document.createElement('div');
+  pre.style.fontFamily = 'var(--font-mono)';
+  pre.style.fontSize = '12px';
+  pre.style.whiteSpace = 'pre';
+  for (const line of out.split('\n')) {
+    const ln = document.createElement('div');
+    if (line.startsWith('+++') || line.startsWith('---')) ln.className = 'ax-text-muted';
+    else if (line.startsWith('@@')) ln.className = 'diff-hunk';
+    else if (line.startsWith('+'))  ln.className = 'diff-add';
+    else if (line.startsWith('-'))  ln.className = 'diff-del';
+    ln.textContent = line;
+    pre.appendChild(ln);
+  }
+  showInfo('Diff vs on-disk', '', { html: pre });
+}
+
+// ---------- Status tab ----------
+let statusTimer = null;
+
+async function loadStatusTab() {
+  $('status-summary').textContent = 'Loading…';
+  await Promise.all([loadModStatus(), loadWorkers(), loadConflicts()]);
+  $('status-summary').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  if (statusTimer) clearInterval(statusTimer);
+  if (SETTINGS.autoPollStatus) {
+    statusTimer = setInterval(() => {
+      if (document.querySelector('section.panel[data-tab="status"]')?.hidden === false) {
+        loadModStatus();
+      }
+    }, Math.max(2000, SETTINGS.liveIntervalMs * 2));
+  }
+}
+
+async function loadModStatus() {
+  const grid = $('modstatus-grid');
+  grid.innerHTML = '';
+  const r = await exec('curl -fsS http://127.0.0.1/server-status?auto 2>/dev/null || true');
+  const text = (r.stdout || '').trim();
+  if (!text) {
+    $('modstatus-raw').hidden = false;
+    $('modstatus-raw').textContent =
+      'mod_status appears unavailable.\n' +
+      'Enable it: a2enmod status, then ensure ExtendedStatus On and a /server-status handler.\n' +
+      'A typical /etc/apache2/mods-enabled/status.conf already provides this for localhost.';
+    return;
+  }
+  $('modstatus-raw').hidden = true;
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const fields = {};
+  for (const l of lines) {
+    const i = l.indexOf(':');
+    if (i > 0) fields[l.slice(0, i).trim()] = l.slice(i + 1).trim();
+  }
+  function card(k, v) {
+    const c = document.createElement('div'); c.className = 'stat-card';
+    const kk = document.createElement('div'); kk.className = 'k'; kk.textContent = k;
+    const vv = document.createElement('div'); vv.className = 'v'; vv.textContent = v == null ? '—' : String(v);
+    c.append(kk, vv); return c;
+  }
+  grid.appendChild(card('Total accesses',    fields['Total Accesses']));
+  grid.appendChild(card('Total kBytes',      fields['Total kBytes']));
+  grid.appendChild(card('Uptime',            fields['Uptime'] ? fields['Uptime'] + 's' : '—'));
+  grid.appendChild(card('Requests/sec',      fields['ReqPerSec']));
+  grid.appendChild(card('Bytes/sec',         fields['BytesPerSec']));
+  grid.appendChild(card('Bytes/req',         fields['BytesPerReq']));
+  grid.appendChild(card('Busy workers',      fields['BusyWorkers']));
+  grid.appendChild(card('Idle workers',      fields['IdleWorkers']));
+  if (fields['CPULoad']) grid.appendChild(card('CPU load', fields['CPULoad']));
+  if (fields['Load1'])   grid.appendChild(card('Load 1m',  fields['Load1']));
+}
+
+async function loadWorkers() {
+  const out = $('workers-info');
+  out.textContent = 'Loading…';
+  const [v, ps] = await Promise.all([
+    exec('apache2ctl -V 2>&1 | head -n 30'),
+    exec("ps -C apache2 -o pid,ppid,user,rss,etime,cmd --no-headers 2>/dev/null | head -n 15"),
+  ]);
+  const psText = (ps.stdout || '').trim();
+  const vText = (v.stdout || '').trim();
+  const text = (vText || '(apache2ctl -V unavailable)') +
+    '\n\n--- workers ---\n' +
+    (psText || '(no apache2 processes)');
+  out.textContent = text;
+}
+
+async function loadConflicts() {
+  const el = $('conflicts');
+  el.innerHTML = '';
+  el.appendChild(emptyEl('Scanning…'));
+  const list = await exec(`ls -1 ${shellQuote(SITES_EN)}`);
+  const sites = (list.stdout || '').split('\n').map(s => s.trim()).filter(Boolean);
+  // For each enabled site, parse <VirtualHost ports> ServerName/Alias
+  const vhosts = []; // { site, port, names }
+  for (const site of sites) {
+    const r = await exec(`cat ${shellQuote(SITES_AVAIL + '/' + site)}`);
+    const c = r.stdout || '';
+    const blocks = c.split(/<VirtualHost\s+/i).slice(1);
+    for (const b of blocks) {
+      const head = (b.match(/^([^>]*)>/) || [])[1] || '';
+      const ports = head.trim().split(/\s+/).map(p => p.split(':').pop()).filter(Boolean);
+      const namesRaw = [];
+      const sn = b.match(/^\s*ServerName\s+(\S+)/mi); if (sn) namesRaw.push(sn[1]);
+      const sa = b.match(/^\s*ServerAlias\s+(.+)$/mi); if (sa) namesRaw.push(...sa[1].trim().split(/\s+/));
+      for (const p of ports) for (const n of namesRaw) vhosts.push({ site, port: p, name: n });
+    }
+  }
+  // Group (port,name) → list of sites; flag groups with >1 site.
+  const map = new Map();
+  for (const v of vhosts) {
+    const k = v.port + '|' + v.name;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(v.site);
+  }
+  el.innerHTML = '';
+  let any = false;
+  for (const [k, list] of map.entries()) {
+    if (list.length < 2) continue;
+    any = true;
+    const [port, name] = k.split('|');
+    const row = document.createElement('div');
+    row.className = 'row';
+    const n = document.createElement('span'); n.className = 'name ax-text';
+    n.textContent = `${name} on :${port}`;
+    const meta = document.createElement('span'); meta.className = 'meta';
+    meta.textContent = list.join(', ');
+    const pill = document.createElement('span'); pill.className = 'ax-pill ax-pill-warn'; pill.textContent = 'conflict';
+    row.append(n, meta, pill);
+    el.appendChild(row);
+  }
+  if (!any) el.appendChild(emptyEl('No conflicts', 'All enabled vhosts have unique (port, name) pairs.'));
+}
+
+// ---------- Wire up ----------
+function wire() {
+  // Tabs
+  document.querySelectorAll('#tabs button').forEach(b => {
+    b.addEventListener('click', () => activateTab(b.dataset.tab));
+  });
+
+  // Daemon
+  $('test').addEventListener('click', () => testConfig({}));
+  $('reload').addEventListener('click', reloadDaemon);
+  $('restart').addEventListener('click', restartDaemon);
+  $('refresh-all').addEventListener('click', () => {
+    loadStatus(); loadSites(); loadConfigs(); loadModules(); populateLogSources(); loadCerts();
+  });
+
+  // Sites
+  $('sites-filter').addEventListener('input', renderSites);
+  $('sites-refresh').addEventListener('click', loadSites);
+  $('sites-add').addEventListener('click', openNewSiteMenu);
+  $('new-site-cancel').addEventListener('click', closeNewSiteMenu);
+  $('new-site-menu').addEventListener('click', (e) => { if (e.target === $('new-site-menu')) closeNewSiteMenu(); });
+
+  // Configs
+  $('configs-filter').addEventListener('input', renderConfigs);
+  $('configs-refresh').addEventListener('click', loadConfigs);
+  $('configs-add').addEventListener('click', () => openEditConf(null));
+
+  // Modules
+  $('modules-filter').addEventListener('input', renderModules);
+  $('modules-refresh').addEventListener('click', loadModules);
+
+  // Logs
+  $('log-source').addEventListener('change', refreshLog);
+  $('logs-refresh-list').addEventListener('click', populateLogSources);
+  $('log-refresh').addEventListener('click', refreshLog);
+  $('log-grep').addEventListener('keydown', (e) => { if (e.key === 'Enter') refreshLog(); });
+  $('log-lines').addEventListener('keydown', (e) => { if (e.key === 'Enter') refreshLog(); });
+  $('log-live').addEventListener('click', () => { liveTimer ? stopLiveTail() : startLiveTail(); });
+
+  // SSL
+  $('ssl-refresh').addEventListener('click', loadCerts);
+  $('ssl-renew-all').addEventListener('click', renewAll);
+  $('ssl-issue').addEventListener('click', openIssueModal);
+  $('cert-cancel').addEventListener('click', closeIssueModal);
+  $('cert-issue').addEventListener('click', issueCert);
+  $('cert-modal').addEventListener('click', (e) => { if (e.target === $('cert-modal')) closeIssueModal(); });
+
+  // Main
+  $('main-file').addEventListener('change', loadMain);
+  $('main-revert').addEventListener('click', () => { $('main-content').value = mainOriginal; });
+  $('main-diff').addEventListener('click', diffMain);
+  $('main-save').addEventListener('click', saveMain);
+
+  // Status
+  $('status-refresh').addEventListener('click', loadStatusTab);
+
+  // Edit modal
+  $('edit-cancel').addEventListener('click', closeEdit);
+  $('edit-save').addEventListener('click', saveEdit);
+  $('edit-diff').addEventListener('click', showEditDiff);
+  $('edit-test').addEventListener('click', testEditSite);
+  $('edit-modal').addEventListener('click', (e) => { if (e.target === $('edit-modal')) closeEdit(); });
+
+  // Confirm
+  $('confirm-ok').addEventListener('click', () => settleConfirm(true));
+  $('confirm-cancel').addEventListener('click', () => settleConfirm(false));
+  $('confirm-modal').addEventListener('click', (e) => { if (e.target === $('confirm-modal')) settleConfirm(false); });
+
+  // Info
+  $('info-close').addEventListener('click', hideInfo);
+  $('info-modal').addEventListener('click', (e) => { if (e.target === $('info-modal')) hideInfo(); });
+
+  // Reload prompt
+  $('reload-prompt-skip').addEventListener('click', () => settleReload(false));
+  $('reload-prompt-now').addEventListener('click', () => settleReload(true));
+  $('reload-prompt').addEventListener('click', (e) => { if (e.target === $('reload-prompt')) settleReload(false); });
+
+  // Global keys
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!$('confirm-modal').hidden) { settleConfirm(false); return; }
+    if (!$('reload-prompt').hidden) { settleReload(false); return; }
+    if (!$('info-modal').hidden) { hideInfo(); return; }
+    if (!$('cert-modal').hidden) { closeIssueModal(); return; }
+    if (!$('new-site-menu').hidden) { closeNewSiteMenu(); return; }
+    if (!$('edit-modal').hidden) { closeEdit(); return; }
+  });
+}
+
+// ---------- Boot ----------
+ax()?.on('ready', (info) => {
+  ax().window?.setTitle('Apache2 Manager');
+  if (info && info.settings) SETTINGS = Object.assign(SETTINGS, info.settings);
+  $('log-lines').value = SETTINGS.logLines;
+  wire();
+  loadStatus();
+  loadSites();
+  startStatusPoll();
+});
+</script>
+</body>
+</html>
