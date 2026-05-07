@@ -1,6 +1,6 @@
 {
   "author": "Axion Team",
-  "description": "Manage apache2: sites, confs, modules, logs, SSL certs, and the main config — with auto-test, diff, backups, and live status.",
+  "description": "Manage apache2: sites, confs, modules, logs, SSL certs, and the main config, with auto-test, diff, backups, and live status.",
   "id": "apache2-manager-plugin",
   "name": "Apache2 Manager",
   "icon": "icon.png",

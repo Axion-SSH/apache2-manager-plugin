@@ -337,12 +337,12 @@
 
       <section class="panel" data-tab="ssl" hidden>
         <div class="toolbar">
-          <span class="ax-text-muted" id="ssl-summary" style="flex:1;">Loading…</span>
+          <span class="ax-text-muted" id="ssl-summary" style="flex:1;"></span>
           <button class="ax-btn ax-btn-ghost ax-btn-sm" id="ssl-refresh">Refresh</button>
           <button class="ax-btn ax-btn-outline ax-btn-sm" id="ssl-renew-all">Renew all</button>
           <button class="ax-btn ax-btn-primary ax-btn-sm" id="ssl-issue">Issue cert</button>
         </div>
-        <div class="list" id="ssl"><div class="ax-empty"><div>Loading…</div></div></div>
+        <div class="list" id="ssl"></div>
       </section>
 
       <section class="panel" data-tab="main" hidden>
@@ -842,7 +842,7 @@ function activateTab(id) {
   if (id === 'configs')  loadConfigs();
   if (id === 'modules')  loadModules();
   if (id === 'logs')     populateLogSources();
-  if (id === 'ssl')      loadCerts();
+  if (id === 'ssl' && !certsLoaded) showCertsIntro();
   if (id === 'main')     loadMain();
   if (id === 'status')   loadStatusTab();
   if (id !== 'logs') stopLiveTail();
@@ -926,7 +926,7 @@ async function saveWithAutoTest(targetPath, content, opts) {
     } else {
       await sudoSafe(`rm -f ${shellQuote(targetPath)}`);
     }
-    return { ok: false, error: 'Config test failed — rolled back.', testOutput: test.output };
+    return { ok: false, error: 'Config test failed - rolled back.', testOutput: test.output };
   }
   return { ok: true, created, replaced, testOutput: test.output, backup };
 }
@@ -1204,7 +1204,7 @@ async function duplicateSite(name) {
 async function deleteSite(name, isEnabled) {
   const ok = await confirmDialog(
     'Delete site',
-    `Delete "${name}"?` + (isEnabled ? ' It is currently enabled — it will be disabled first.' : '')
+    `Delete "${name}"?` + (isEnabled ? ' It is currently enabled - it will be disabled first.' : '')
   );
   if (!ok) return;
   await backupFile(SITES_AVAIL + '/' + name);
@@ -1664,15 +1664,67 @@ function stopLiveTail() {
 }
 
 // ---------- SSL tab ----------
+//
+// The SSL tab does not auto-load on activation. Reading certificates
+// requires sudo for every entry under /etc/letsencrypt/live, so the
+// user is shown a one-screen explanation and an explicit
+// "Load certificates" button first. Once loaded, the rendered list is
+// cached in the DOM and persists across tab switches; the user can
+// hit Refresh to re-fetch.
+let certsLoaded = false;
+
+function showCertsIntro() {
+  $('ssl-summary').textContent = '';
+  const el = $('ssl');
+  el.innerHTML = '';
+
+  const card = document.createElement('div');
+  card.className = 'ax-empty';
+  card.style.maxWidth = '560px';
+  card.style.margin = '24px auto';
+  card.style.padding = '20px';
+
+  const title = document.createElement('div');
+  title.className = 'ax-empty-title';
+  title.textContent = 'Inspecting certificates requires sudo';
+  card.appendChild(title);
+
+  const body = document.createElement('div');
+  body.className = 'ax-text-secondary';
+  body.style.lineHeight = '1.5';
+  body.style.marginTop = '8px';
+  body.innerHTML =
+    'Let\'s Encrypt stores certificates under <span class="ax-mono">' + LE_LIVE + '</span>, ' +
+    'a directory only <em>root</em> can read. Loading the list runs ' +
+    '<span class="ax-mono">ls</span> and one ' +
+    '<span class="ax-mono">openssl x509</span> per cert via sudo to read each ' +
+    'expiry date and SAN list - you\'ll be asked for your sudo password.';
+  card.appendChild(body);
+
+  const row = document.createElement('div');
+  row.className = 'ax-row';
+  row.style.justifyContent = 'center';
+  row.style.marginTop = '16px';
+  const btn = document.createElement('button');
+  btn.className = 'ax-btn ax-btn-primary';
+  btn.textContent = 'Load certificates';
+  btn.addEventListener('click', loadCerts);
+  row.appendChild(btn);
+  card.appendChild(row);
+
+  el.appendChild(card);
+}
+
 async function loadCerts() {
   const el = $('ssl');
   el.innerHTML = '';
   el.appendChild(emptyEl('Loading…'));
   // /etc/letsencrypt/live is typically 0700 root — list via sudo.
   const r = await sudoSafe(`ls -1 ${shellQuote(LE_LIVE)} 2>/dev/null || true`);
-  if (r._cancelled) { el.innerHTML = ''; el.appendChild(emptyEl('Cancelled')); return; }
+  if (r._cancelled) { showCertsIntro(); return; }
   const dirs = (r.stdout || '').split('\n').map(s => s.trim()).filter(Boolean).filter(n => n !== 'README');
   el.innerHTML = '';
+  certsLoaded = true;
   $('ssl-summary').textContent = `${dirs.length} certificate(s)`;
   if (!dirs.length) {
     el.appendChild(emptyEl('No certificates', `${LE_LIVE} is empty or absent. Click Issue cert to create one.`));
