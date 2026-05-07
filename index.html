@@ -136,6 +136,92 @@
       min-height: 0;
     }
 
+    /* ---------- Custom select ---------- */
+    .cselect { position: relative; min-width: 0; }
+    .cselect-trigger {
+      display: flex; align-items: center; gap: 8px;
+      width: 100%;
+      padding: 6px 10px;
+      background: var(--color-surface-1);
+      border: 1px solid var(--color-border-subtle);
+      border-radius: var(--radius-sm);
+      color: var(--color-text-primary);
+      font-family: inherit; font-size: 12px;
+      cursor: pointer;
+      text-align: left;
+      box-sizing: border-box;
+    }
+    .cselect-trigger:hover { border-color: var(--color-border-strong); }
+    .cselect-trigger.open { border-color: var(--color-accent); }
+    .cselect-trigger .label {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .cselect-trigger.placeholder .label { color: var(--color-text-muted); }
+    .cselect-trigger .chev {
+      color: var(--color-text-muted);
+      flex-shrink: 0;
+      transition: transform 120ms ease;
+      font-size: 10px;
+    }
+    .cselect-trigger.open .chev { transform: rotate(180deg); }
+    .cselect-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0; right: 0;
+      background: var(--color-bg-2);
+      border: 1px solid var(--color-border-subtle);
+      border-radius: var(--radius-sm);
+      box-shadow: var(--shadow-window);
+      z-index: 50;
+      max-height: 320px; overflow: auto;
+      padding: 4px;
+    }
+    .cselect-option {
+      padding: 7px 10px;
+      border-radius: var(--radius-xs);
+      cursor: pointer;
+      font-size: 12px;
+      display: flex; align-items: center; gap: 8px;
+      color: var(--color-text-primary);
+      border-bottom: 1px solid var(--color-border-subtle);
+    }
+    .cselect-option:last-child { border-bottom: none; }
+    .cselect-option:hover {
+      background: var(--color-accent-tint, var(--color-surface-2));
+      color: var(--color-text-primary);
+    }
+    .cselect-option.active {
+      background: var(--color-accent-soft, var(--color-accent-tint));
+      color: var(--color-accent);
+    }
+    .cselect-option.active:hover {
+      background: var(--color-accent-soft, var(--color-accent-tint));
+    }
+    .cselect-option .opt-label {
+      flex: 1; min-width: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .cselect-option .opt-tag {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: var(--radius-xs);
+      background: var(--color-bg-2);
+      color: var(--color-text-muted);
+      font-family: var(--font-mono);
+      flex-shrink: 0;
+    }
+    .cselect-option.active .opt-tag {
+      background: var(--color-accent-deep, var(--color-accent));
+      color: var(--color-on-accent);
+    }
+    .cselect-empty {
+      padding: 12px;
+      color: var(--color-text-muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
     /* ---------- Status / pills ---------- */
     .pill-row { display: flex; gap: 6px; flex-wrap: wrap; }
     .stat-grid {
@@ -224,7 +310,13 @@
 
       <section class="panel" data-tab="logs" hidden>
         <div class="toolbar">
-          <select class="ax-select" id="log-source" style="flex:1;"></select>
+          <div class="cselect" id="log-source-wrap" style="flex:1;">
+            <button class="cselect-trigger placeholder" id="log-source-trigger" type="button">
+              <span class="label">Pick a log…</span>
+              <span class="chev">▾</span>
+            </button>
+            <div class="cselect-menu" id="log-source-menu" hidden></div>
+          </div>
           <button class="ax-btn ax-btn-ghost ax-btn-sm" id="logs-refresh-list">↻ list</button>
         </div>
         <div class="toolbar">
@@ -752,7 +844,7 @@ function activateTab(id) {
   if (id === 'ssl')      loadCerts();
   if (id === 'main')     loadMain();
   if (id === 'status')   loadStatusTab();
-  if (id !== 'logs')     stopLiveTail();
+  if (id !== 'logs')   { stopLiveTail(); LogSelect.closeMenu(); }
 }
 
 // ---------- Backups ----------
@@ -1333,18 +1425,96 @@ function renderModuleRow(name, isEnabled) {
 
 // ---------- Logs tab ----------
 let liveTimer = null;
-let lastLogPath = null;
+
+// Custom select for the log source. Values come from
+// `populateLogSources`; a selection is made only by an explicit user
+// click — there is no auto-pick on populate.
+const LogSelect = {
+  options: [],   // [{ path, label, tag }]
+  value: null,
+  open: false,
+
+  setOptions(opts) {
+    this.options = opts;
+    // Drop a stale selection if the file is no longer enumerated.
+    if (this.value && !opts.some(o => o.path === this.value)) this.value = null;
+    this.render();
+  },
+
+  pick(path) {
+    this.value = path;
+    this.closeMenu();
+    this.renderTrigger();
+    refreshLog();
+  },
+
+  toggle() { this.open ? this.closeMenu() : this.openMenu(); },
+
+  openMenu() {
+    if (!this.options.length) return;
+    this.open = true;
+    $('log-source-trigger').classList.add('open');
+    $('log-source-menu').hidden = false;
+    this.renderMenu();
+  },
+
+  closeMenu() {
+    this.open = false;
+    $('log-source-trigger').classList.remove('open');
+    $('log-source-menu').hidden = true;
+  },
+
+  renderTrigger() {
+    const t = $('log-source-trigger');
+    const lbl = t.querySelector('.label');
+    if (this.value) {
+      const opt = this.options.find(o => o.path === this.value);
+      t.classList.remove('placeholder');
+      lbl.textContent = opt ? `${opt.tag} · ${opt.label}` : this.value;
+      t.title = (opt && opt.path) || this.value;
+    } else {
+      t.classList.add('placeholder');
+      lbl.textContent = 'Pick a log…';
+      t.title = '';
+    }
+  },
+
+  renderMenu() {
+    const menu = $('log-source-menu');
+    menu.innerHTML = '';
+    if (!this.options.length) {
+      const e = document.createElement('div');
+      e.className = 'cselect-empty';
+      e.textContent = '(no logs found)';
+      menu.appendChild(e);
+      return;
+    }
+    for (const o of this.options) {
+      const el = document.createElement('div');
+      el.className = 'cselect-option' + (o.path === this.value ? ' active' : '');
+      const tg = document.createElement('span'); tg.className = 'opt-tag'; tg.textContent = o.tag;
+      const lb = document.createElement('span'); lb.className = 'opt-label'; lb.textContent = o.label;
+      lb.title = o.path;
+      el.append(tg, lb);
+      el.addEventListener('click', () => this.pick(o.path));
+      menu.appendChild(el);
+    }
+  },
+
+  render() {
+    this.renderTrigger();
+    if (this.open) this.renderMenu();
+  },
+};
 
 async function populateLogSources() {
-  const sel = $('log-source');
-  sel.innerHTML = '<option value="">Loading…</option>';
   const sources = [];
 
   // Global access/error logs (and other_vhosts_access if present).
   const globals = ['access.log', 'error.log', 'other_vhosts_access.log'];
   for (const g of globals) {
     const ok = (await exec(`test -e ${shellQuote(APACHE_LOGS + '/' + g)}`)).exitCode === 0;
-    if (ok) sources.push({ label: `[global] ${g}`, path: APACHE_LOGS + '/' + g });
+    if (ok) sources.push({ tag: 'global', label: g, path: APACHE_LOGS + '/' + g });
   }
 
   // Per-site logs: parse ErrorLog/CustomLog from each enabled vhost.
@@ -1356,6 +1526,7 @@ async function populateLogSources() {
     const seen = new Set();
     const lineRe = /^\s*(?:ErrorLog|CustomLog|TransferLog)\s+("([^"]+)"|(\S+))/gmi;
     let m;
+    const tag = site.replace(/\.conf$/, '');
     while ((m = lineRe.exec(content)) !== null) {
       let path = (m[2] || m[3] || '').trim();
       if (!path || path.startsWith('|')) continue;          // piped logs
@@ -1363,30 +1534,18 @@ async function populateLogSources() {
       if (!path.startsWith('/')) path = APACHE_LOGS + '/' + path;
       if (seen.has(path)) continue;
       seen.add(path);
-      sources.push({ label: `[${site}] ${path}`, path });
+      sources.push({ tag, label: path.split('/').pop(), path });
     }
   }
 
-  sel.innerHTML = '';
-  if (!sources.length) {
-    const o = document.createElement('option');
-    o.value = ''; o.textContent = '(no logs found)';
-    sel.appendChild(o);
-    return;
-  }
-  for (const s of sources) {
-    const o = document.createElement('option');
-    o.value = s.path; o.textContent = s.label;
-    sel.appendChild(o);
-  }
-  if (lastLogPath && sources.some(s => s.path === lastLogPath)) sel.value = lastLogPath;
-  refreshLog();
+  LogSelect.setOptions(sources);
+  // Intentionally no auto-pick — the log only loads when the user
+  // chooses one from the menu.
 }
 
 async function refreshLog() {
-  const path = $('log-source').value;
-  if (!path) { $('log-output').textContent = '(no log selected)'; return; }
-  lastLogPath = path;
+  const path = LogSelect.value;
+  if (!path) { $('log-output').textContent = 'Select a log to begin.'; return; }
   const lines = parseInt($('log-lines').value, 10) || SETTINGS.logLines;
   const grep = ($('log-grep').value || '').trim();
   let cmd = `tail -n ${lines} ${shellQuote(path)}`;
@@ -1396,7 +1555,6 @@ async function refreshLog() {
   if (r._cancelled) return;
   const out = r.stdout || '';
   $('log-output').textContent = out || (r.stderr || '').trim() || '(empty)';
-  // Auto-scroll to bottom.
   const el = $('log-output');
   el.scrollTop = el.scrollHeight;
 }
@@ -1736,7 +1894,11 @@ function wire() {
   $('modules-refresh').addEventListener('click', loadModules);
 
   // Logs
-  $('log-source').addEventListener('change', refreshLog);
+  $('log-source-trigger').addEventListener('click', (e) => { e.stopPropagation(); LogSelect.toggle(); });
+  document.addEventListener('click', (e) => {
+    if (!LogSelect.open) return;
+    if (!$('log-source-wrap').contains(e.target)) LogSelect.closeMenu();
+  });
   $('logs-refresh-list').addEventListener('click', populateLogSources);
   $('log-refresh').addEventListener('click', refreshLog);
   $('log-grep').addEventListener('keydown', (e) => { if (e.key === 'Enter') refreshLog(); });
@@ -1784,6 +1946,7 @@ function wire() {
   // Global keys
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    if (LogSelect.open) { LogSelect.closeMenu(); return; }
     if (!$('confirm-modal').hidden) { settleConfirm(false); return; }
     if (!$('reload-prompt').hidden) { settleReload(false); return; }
     if (!$('info-modal').hidden) { hideInfo(); return; }
